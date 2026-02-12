@@ -98,12 +98,7 @@ def get_analysis(deal_id):
             "future": extracted_data.get('revenue', {}).get('future', []),
             "visible": True
         },
-        "profitMetrics": {
-            "grossProfit": extracted_data.get('profit_metrics', {}).get('gross_profit', []),
-            "ebitda": extracted_data.get('profit_metrics', {}).get('ebitda', []),
-            "netIncome": extracted_data.get('profit_metrics', {}).get('net_income', []),
-            "visible": True
-        },
+        "profitMetrics": extracted_data.get('profit_metrics', {}),
         "marketIntelligence": {
             "industryPosition": extracted_data.get('market_intelligence', {}).get('industry_position'),
             "marketSharePercent": extracted_data.get('market_intelligence', {}).get('market_share_percent'),

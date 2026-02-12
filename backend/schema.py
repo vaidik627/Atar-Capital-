@@ -25,13 +25,16 @@ def get_extraction_schema():
         "profit_metrics": {
             "gross_profit": [],
             "operating_income": [],
-            "ebit": [],
             "ebitda": [],
             "adjusted_ebitda": [],
             "net_income": [],
-            "net_profit": [],
-            "profit_after_tax": [],
-            "ebitda_margin_percent": []
+            "earnings_per_share": [],
+            "operating_cash_flow": [],
+            "free_cash_flow": [],
+            "gross_margin_percent": [],
+            "operating_margin_percent": [],
+            "ebitda_margin_percent": [],
+            "net_margin_percent": []
         },
         "market_intelligence": {
             "market_size": None,

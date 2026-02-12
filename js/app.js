@@ -264,6 +264,62 @@ document.addEventListener('DOMContentLoaded', () => {
 
         contentArea.innerHTML = html;
 
+        function renderProfitRow(label, data, isRevenue = false) {
+            let content = '';
+            
+            if (isRevenue && data) {
+                // Handle single revenue object
+                const val = data.value || '-';
+                const unit = data.unit || '';
+                const per = data.period || '';
+                content = `
+                    <div style="text-align: right;">
+                        <div style="font-weight: 600;">${val} ${unit}</div>
+                        ${per ? `<div style="font-size: 0.75rem; color: #94a3b8;">${per}</div>` : ''}
+                    </div>
+                `;
+            } else if (Array.isArray(data) && data.length > 0) {
+                // Handle array of profit metrics
+                content = `
+                    <div style="text-align: right; display: flex; flex-direction: column; gap: 4px;">
+                        ${data.map(item => `
+                            <div>
+                                <span style="font-weight: 600;">${item.value || '-'} ${item.unit || ''}</span>
+                                <span style="font-size: 0.75rem; color: #94a3b8; margin-left: 6px;">(${item.period || 'N/A'})</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } else {
+                return ''; // Don't render empty rows
+            }
+
+            return `
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 0.5rem 0; border-bottom: 1px solid #f8fafc; font-size: 0.9rem;">
+                    <span style="color: var(--text-secondary); margin-top: 2px;">${label}</span>
+                    ${content}
+                </div>
+            `;
+        }
+
+        function renderMarginCard(label, data, color) {
+            if (!Array.isArray(data) || data.length === 0) return '';
+            
+            const latest = data[0];
+            const value = latest.value;
+            if (!value) return '';
+
+            return `
+                <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; border-left: 4px solid ${color};">
+                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">${label}</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">
+                        ${value}%
+                    </div>
+                    <div style="font-size: 0.75rem; color: #94a3b8;">${latest.period || 'Latest'}</div>
+                </div>
+            `;
+        }
+
         // Attach event listeners for specific views
         if (viewName === 'analysis' && state.currentDealId) {
             loadAnalysisData(state.currentDealId);
@@ -365,47 +421,38 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <i class="fas fa-chart-pie" style="color: var(--warning-color); margin-right: 0.5rem;"></i> Profitability
                             </h3>
                             
-                            <div style="margin-bottom: 1rem;">
-                                <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem;">EBITDA</h4>
-                                <table style="width: 100%; font-size: 0.9rem;">
-                                    <tbody>
-                                        ${(data.profitMetrics.ebitda || []).map(e => `
-                                            <tr>
-                                                <td style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">${e.period}</td>
-                                                <td style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${e.value} ${e.unit || ''}</td>
-                                            </tr>
-                                        `).join('')}
-                                        ${(!data.profitMetrics.ebitda || data.profitMetrics.ebitda.length === 0) ? '<tr><td style="color: #94a3b8;">No EBITDA data available</td></tr>' : ''}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+                                <!-- Profitability & Margins -->
+                                <div>
+                                    <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Core Profitability</h4>
+                                    
+                                    <div style="margin-bottom: 1rem;">
+                                        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 600; padding-bottom: 0.25rem; border-bottom: 1px solid #e2e8f0; margin-bottom: 0.5rem;">
+                                        <span>Metric</span>
+                                        <span>Values (Period)</span>
+                                    </div>
+                                        
+                                        ${renderProfitRow('Revenue', data.revenue?.present, true)}
+                                        ${renderProfitRow('Gross Profit', data.profitMetrics?.gross_profit)}
+                                        ${renderProfitRow('EBITDA', data.profitMetrics?.ebitda)}
+                                        ${renderProfitRow('Adj. EBITDA', data.profitMetrics?.adjusted_ebitda)}
+                                        ${renderProfitRow('Op. Income', data.profitMetrics?.operating_income)}
+                                        ${renderProfitRow('Net Income', data.profitMetrics?.net_income)}
+                                        ${renderProfitRow('Op. Cash Flow', data.profitMetrics?.operating_cash_flow)}
+                                    </div>
+                                </div>
 
-                            <div>
-                                <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem;">Gross Profit</h4>
-                                <table style="width: 100%; font-size: 0.9rem;">
-                                    <tbody>
-                                        ${(data.profitMetrics.grossProfit || []).map(g => `
-                                            <tr>
-                                                <td style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">${g.period}</td>
-                                                <td style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">${g.value} ${g.unit || ''}</td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            <div style="margin-top: 1rem;">
-                                <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem;">Net Income</h4>
-                                <table style="width: 100%; font-size: 0.9rem;">
-                                    <tbody>
-                                        ${(data.profitMetrics.netIncome || []).map(n => `
-                                            <tr>
-                                                <td style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">${n.period}</td>
-                                                <td style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">${n.value} ${n.unit || ''}</td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
+                                <!-- Key Margins -->
+                                <div>
+                                    <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Key Margins & Ratios</h4>
+                                    
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                                        ${renderMarginCard('Gross Margin', data.profitMetrics?.gross_margin_percent, '#10b981')}
+                                        ${renderMarginCard('EBITDA Margin', data.profitMetrics?.ebitda_margin_percent, '#f59e0b')}
+                                        ${renderMarginCard('Op. Margin', data.profitMetrics?.operating_margin_percent, '#3b82f6')}
+                                        ${renderMarginCard('Net Margin', data.profitMetrics?.net_margin_percent, '#6366f1')}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 

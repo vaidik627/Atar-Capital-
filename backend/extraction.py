@@ -346,10 +346,16 @@ You must return data matching this exact structure:
    - Projected/future revenue (forecasts)
    - Include period (e.g., "FY2023", "Q1 2024"), value, and unit (millions/thousands)
 
-3. **Profit Metrics:**
-   - Look for: EBITDA, Adjusted EBITDA, Net Income, Gross Profit, Operating Income
-   - Include EBITDA margins if mentioned
-   - Store as arrays with period, value, unit, source_context
+3. **Profit Metrics (COMPREHENSIVE):**
+   - **Gross Profit:** Extract values, margins, and trends.
+   - **Operating Income:** Extract operating profit/loss.
+   - **EBITDA:** Extract EBITDA and Adjusted EBITDA. **CRITICAL:** Look for "Adjusted EBITDA" reconciliations or footnotes.
+   - **Net Income:** Extract Net Income / Net Profit after tax.
+   - **Margins:** Calculate or extract Gross Margin %, Operating Margin %, EBITDA Margin %, Net Margin %.
+   - **EPS:** Earnings Per Share (Basic and Diluted).
+   - **Cash Flow:** Operating Cash Flow, Free Cash Flow (if available).
+   - Store as arrays with `period`, `value` (number), `unit`, `source_context`.
+   - Ensure you capture the *exact* fiscal period (e.g., "FY23", "Q1 24", "LTM Sep 23").
 
 4. **Market Intelligence:**
    - Market size and growth rate
@@ -357,10 +363,14 @@ You must return data matching this exact structure:
    - List key competitors
    - Market trends, customer base, geographic presence
 
-5. **Risk Analysis:**
-   - Categorize risks into: operational, financial, market, regulatory
-   - Extract specific risks mentioned in the document
-   - Note confidence level
+5. **Risk Analysis (CRITICAL SECTION):**
+   - You MUST identify and categorize risks. If a section titled "Risks" is missing, **INFER** risks from the context (e.g., "highly competitive market" -> Market Risk, "dependent on key suppliers" -> Operational Risk).
+   - **Operational Risks:** Supply chain issues, key person dependency, technology failure, integration risks.
+   - **Financial Risks:** Currency fluctuation, high leverage, liquidity constraints, customer concentration.
+   - **Market Risks:** Competition, pricing pressure, demand changes, economic downturns.
+   - **Regulatory Risks:** Legal changes, compliance costs, environmental regulations, pending litigation.
+   - Populate the lists `operational_risks`, `financial_risks`, `market_risks`, `regulatory_risks` with specific bullet points.
+   - Do NOT leave these empty if any risks can be reasonably inferred.
 
 6. **AI Recommendation:**
    - Based on the data, provide Buy/Hold/Sell recommendation
