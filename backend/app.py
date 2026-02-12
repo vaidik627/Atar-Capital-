@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os
 import time
 import traceback
+import json
 from .ocr_service import extract_text_from_file
 from .extraction import extract_financial_data, load_extracted_data
 
@@ -25,6 +26,53 @@ def index():
 @app.route('/<path:path>')
 def serve_static(path):
     return send_from_directory(app.static_folder, path)
+
+# --- Persistence Recovery ---
+def load_existing_deals():
+    """Scans extracted_data directory and repopulates DEALS/DOCUMENTS"""
+    if not os.path.exists(EXTRACTED_DATA_DIR):
+        return
+
+    print(f"Scanning for existing deals in: {EXTRACTED_DATA_DIR}")
+    for filename in os.listdir(EXTRACTED_DATA_DIR):
+        if filename.endswith('.json'):
+            try:
+                deal_id = filename.replace('.json', '')
+                filepath = os.path.join(EXTRACTED_DATA_DIR, filename)
+                
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    extracted_data = json.load(f)
+                
+                # Reconstruct deal info
+                company_name = extracted_data.get('company_name') or f"Deal {deal_id}"
+                deal_value = extracted_data.get('market_intelligence', {}).get('market_size') or "N/A"
+                
+                # Populate DEALS
+                DEALS[deal_id] = {
+                    "id": deal_id,
+                    "name": company_name,
+                    "value": deal_value,
+                    "status": "Active",
+                    "date": time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(filepath))),
+                    "file_name": f"{deal_id}.pdf" # Approximate
+                }
+                
+                # Populate DOCUMENTS (Mock)
+                doc_id = f"doc_{deal_id}"
+                DOCUMENTS[doc_id] = {
+                    "id": doc_id,
+                    "deal_id": deal_id,
+                    "name": f"{deal_id}.pdf",
+                    "extracted_data": extracted_data,
+                    "ocr_text_preview": "Loaded from disk..."
+                }
+                print(f"Recovered deal: {deal_id} ({company_name})")
+                
+            except Exception as e:
+                print(f"Failed to load deal from {filename}: {e}")
+
+# Load deals on startup
+load_existing_deals()
 
 # --- API Endpoints ---
 
