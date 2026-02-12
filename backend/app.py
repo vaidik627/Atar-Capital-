@@ -7,7 +7,7 @@ import json
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from .ocr_service import extract_text_from_file
-from .extraction import extract_financial_data, load_extracted_data
+from .extraction import extract_financial_data, load_extracted_data, extract_pre_bid_analysis
 
 app = Flask(__name__, static_folder='../')
 CORS(app)
@@ -53,13 +53,21 @@ def load_existing_deals():
                 deal_value = extracted_data.get('market_intelligence', {}).get('market_size') or "N/A"
                 
                 # Populate DEALS
+                # Improved filename recovery logic
+                file_name = f"{deal_id}.pdf"
+                if deal_id.startswith('upload_'):
+                    parts = deal_id.split('_')
+                    if len(parts) >= 3:
+                        # Reconstruct filename: upload_FILENAME_TIMESTAMP
+                        file_name = "_".join(parts[1:-1])
+
                 DEALS[deal_id] = {
                     "id": deal_id,
                     "name": company_name,
                     "value": deal_value,
                     "status": "Active",
                     "date": time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(filepath))),
-                    "file_name": f"{deal_id}.pdf" # Approximate
+                    "file_name": file_name
                 }
                 
                 # Populate DOCUMENTS (Mock)
@@ -285,6 +293,40 @@ def generate_report():
         data = request.json
         deal_id = data.get('dealId')
         
+        # 1. Fetch OCR Text
+        parsed_text_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'parsed_text')
+        ocr_text = ""
+        # Find the latest OCR file for this deal
+        # Heuristic: search for files containing the deal_id or just pick the latest one if we can't link easily
+        # In process_document, we saved as f"{int(time.time())}_{file.filename}.txt"
+        # We might not have a direct link from deal_id to filename in the current mock DB setup easily unless we stored it.
+        # Check DEALS
+        deal_info = DEALS.get(deal_id)
+        if deal_info and deal_info.get('file_name'):
+             # Try to find file with this name
+             target_name = deal_info.get('file_name')
+             # Scan dir
+             files = os.listdir(parsed_text_dir)
+             matching_files = [f for f in files if target_name in f]
+             if matching_files:
+                 # Sort by time (prefix)
+                 matching_files.sort(reverse=True)
+                 with open(os.path.join(parsed_text_dir, matching_files[0]), 'r', encoding='utf-8') as f:
+                     ocr_text = f.read()
+        
+        # Fallback: if no deal specific text found, check if we can use any recent text (for demo)
+        if not ocr_text:
+             print(f"Warning: No specific OCR text found for deal {deal_id}, using dummy empty text or skipping extraction.")
+
+        # 2. Extract Pre-Bid Analysis Data
+        pre_bid_data = {}
+        if ocr_text:
+            try:
+                print(f"Extracting Pre-Bid Analysis for deal {deal_id}...")
+                pre_bid_data = extract_pre_bid_analysis(ocr_text, deal_id)
+            except Exception as e:
+                print(f"Pre-Bid Extraction failed: {e}")
+        
         # Initialize Workbook
         wb = Workbook()
         ws = wb.active
@@ -312,22 +354,34 @@ def generate_report():
         ws['D2'].font = title_font
         ws['D3'] = deal_id
         
+        # Helpers to safely get data
+        summary = pre_bid_data.get('summary', {}).get('atar_equity', {})
+        sources = pre_bid_data.get('sources_and_uses', {}).get('sources', {})
+        uses = pre_bid_data.get('sources_and_uses', {}).get('uses', {})
+        returns = pre_bid_data.get('shareholder_returns', {}).get('exit', {})
+        distribution = pre_bid_data.get('distribution_of_proceeds', {})
+
         # Base Inputs
         ws['A4'] = "Base Inputs"
         ws['A4'].font = bold_font
         
+        # Mapping some extracted values to Base Inputs if applicable
+        # The template has specific rows. We'll fill what we can match or keep blank/default.
+        # WC Availability is in Uses
+        
         base_inputs = [
-            "WC Availability",
-            "Debt Sourcing Fees",
-            "Diligence Fees",
-            "Atar Transaction Fees",
-            "FCCR",
-            "SOFR"
+            ("WC Availability", uses.get('wc_availability')),
+            ("Debt Sourcing Fees", 0), # Not in schema
+            ("Diligence Fees", 0),
+            ("Atar Transaction Fees", uses.get('transaction_fees')),
+            ("FCCR", 0),
+            ("SOFR", 0)
         ]
         
-        for i, label in enumerate(base_inputs, start=5):
+        for i, (label, val) in enumerate(base_inputs, start=5):
             ws[f'A{i}'] = label
-            # ws[f'B{i}'] = val  <-- Removed value
+            if val is not None:
+                ws[f'B{i}'] = val
             ws[f'B{i}'].alignment = center_align
             ws[f'B{i}'].fill = blue_fill
             
@@ -348,8 +402,8 @@ def generate_report():
         
         for i, label in enumerate(financing_inputs, start=13):
             ws[f'A{i}'] = label
-            # ws[f'B{i}'] = val <-- Removed value
-            # ws[f'C{i}'] = pct <-- Removed value
+            # ws[f'B{i}'] = val 
+            # ws[f'C{i}'] = pct 
             
         # Financial Projections Selection
         ws['A24'] = "Financial Projections"
@@ -362,52 +416,125 @@ def generate_report():
         ws['B26'].font = bold_font
         ws['B27'] = "EBITDA"
         ws['C27'] = "Multiple"
-        # ws['B28'] = "$23,000" <-- Removed value
-        # ws['C28'] = "3.0x"    <-- Removed value
+        # ws['B28'] = "$23,000" 
+        # ws['C28'] = "3.0x"    
         
         # Exit Assumptions
         ws['B32'] = "Exit Assumptions"
         ws['B32'].font = bold_font
         ws['B33'] = "EBITDA"
         ws['C33'] = "Multiple"
-        # ws['B34'] = "$35,000" <-- Removed value
-        # ws['C34'] = "3.0x"    <-- Removed value
+        # ws['B34'] = "$35,000" 
+        # ws['C34'] = "3.0x"    
         
         # Shareholder Returns
         ws['D32'] = "Shareholder Returns"
         ws['D32'].font = bold_font
         
         shareholder_rows = [
-            "Exit",
-            "EV @ Exit",
-            "+ Cash",
-            "- Debt",
-            "- Expenses",
-            "- Mgmt LTIP",
-            "- Seller Equity",
-            "Atar Equity"
+            ("Exit", None),
+            ("EV @ Exit", returns.get('ev_at_exit')),
+            ("+ Cash", returns.get('plus_cash')),
+            ("- Debt", returns.get('less_debt')),
+            ("- Expenses", returns.get('less_expenses')),
+            ("- Mgmt LTIP", returns.get('less_mgmt_ltip')),
+            ("- Seller Equity", returns.get('less_seller_equity')),
+            ("Atar Equity", returns.get('atar_equity'))
         ]
         
-        for i, label in enumerate(shareholder_rows, start=33):
+        for i, (label, val) in enumerate(shareholder_rows, start=33):
             ws[f'D{i}'] = label
-            # ws[f'F{i}'] = val <-- Removed value
+            if val is not None:
+                ws[f'F{i}'] = val
         
         # Distribution of Proceeds
         ws['D42'] = "Distribution of Proceeds"
         ws['D42'].font = bold_font
         
         dist_rows = [
-            "Return of Equity",
-            "Interest on Preferred Shares",
-            "LP Split of Proceeds",
-            "LP Total Distribution",
-            "LP MOIC",
-            "GP Split of Proceeds"
+            ("Return of Equity", distribution.get('return_of_equity')),
+            ("Interest on Preferred Shares", distribution.get('interest_on_preferred_shares')),
+            ("LP Split of Proceeds", distribution.get('lp_split_of_proceeds')),
+            ("LP Total Distribution", distribution.get('lp_total_distribution')),
+            ("LP MOIC", distribution.get('lp_moic')),
+            ("GP Split of Proceeds", distribution.get('gp_split_of_proceeds'))
         ]
         
-        for i, label in enumerate(dist_rows, start=43):
+        for i, (label, val) in enumerate(dist_rows, start=43):
             ws[f'D{i}'] = label
-            # ws[f'F{i}'] = val <-- Removed value
+            if val is not None:
+                ws[f'F{i}'] = val
+
+        # --- NEW SECTION: Sources & Uses (from extraction) ---
+        # We can place this around the inputs or summary area
+        # Let's put it below Base Inputs, shifting Financing Inputs down if needed, 
+        # or just place it in a new area. 
+        # Given the user's template image, "Summary" and "Sources & Uses" seem to be top level blocks.
+        # Let's put "Summary" and "Sources & Uses" in columns G-I (between Inputs and Financials) or 
+        # overwrite the "Financing Inputs" area if that's what the user implies by "this is the template".
+        # For now, I'll add them to a new block starting at Row 4, Column G (7)
+        
+        # Summary
+        ws['G4'] = "Summary"
+        ws['G4'].font = bold_font
+        ws['G5'] = "Atar Equity"
+        ws['G5'].font = bold_font
+        ws['G6'] = "Equity @ Close"
+        ws['H6'] = summary.get('equity_at_close')
+        ws['G7'] = "Capital Call"
+        ws['H7'] = summary.get('capital_call')
+        ws['G8'] = "Total Atar Equity"
+        ws['H8'] = summary.get('total_atar_equity')
+        ws['H8'].font = bold_font
+        
+        # Sources & Uses
+        ws['G11'] = "Sources & Uses"
+        ws['G11'].font = bold_font
+        
+        ws['G12'] = "Sources"
+        ws['G12'].font = bold_font
+        
+        s_sources = [
+            ("Equity @ Close", sources.get('equity_at_close')),
+            ("AR", sources.get('ar')),
+            ("Inventory", sources.get('inventory')),
+            ("PP&E", sources.get('ppe')),
+            ("Other", sources.get('other')),
+            ("Earnout", sources.get('earnout')),
+            ("Seller Roll", sources.get('seller_roll'))
+        ]
+        
+        row_idx = 13
+        for label, val in s_sources:
+            ws[f'G{row_idx}'] = label
+            ws[f'H{row_idx}'] = val
+            row_idx += 1
+            
+        ws[f'G{row_idx}'] = "Total Sources"
+        ws[f'G{row_idx}'].font = bold_font
+        ws[f'H{row_idx}'] = sources.get('total_sources')
+        ws[f'H{row_idx}'].font = bold_font
+        row_idx += 2
+        
+        ws[f'G{row_idx}'] = "Uses"
+        ws[f'G{row_idx}'].font = bold_font
+        row_idx += 1
+        
+        s_uses = [
+            ("Purchase Price", uses.get('purchase_price')),
+            ("WC Availability", uses.get('wc_availability')),
+            ("Transaction Fees", uses.get('transaction_fees'))
+        ]
+        
+        for label, val in s_uses:
+            ws[f'G{row_idx}'] = label
+            ws[f'H{row_idx}'] = val
+            row_idx += 1
+            
+        ws[f'G{row_idx}'] = "Total Uses"
+        ws[f'G{row_idx}'].font = bold_font
+        ws[f'H{row_idx}'] = uses.get('total_uses')
+        ws[f'H{row_idx}'].font = bold_font
             
         # --- Section 2: Financial Model (Right Panel) ---
         
