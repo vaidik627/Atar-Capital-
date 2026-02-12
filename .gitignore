@@ -12,6 +12,7 @@ venv/
 # Data
 backend/extracted_data/
 backend/parsed_text/
+backend/reports/
 
 # Secrets
 backend/credentials.json

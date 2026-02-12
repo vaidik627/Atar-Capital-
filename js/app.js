@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const API_URL = 'http://localhost:8000/api';
+
     // --- State Management ---
     const state = {
         isAuthenticated: false,
@@ -234,9 +236,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="card">
                          <div class="section-header">
                             <h3>Generated Reports</h3>
+                            <button id="refresh-reports" class="btn-secondary" style="font-size: 0.875rem; padding: 0.25rem 0.75rem;">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
                         </div>
-                        <div class="empty-state" style="padding: 3rem;">
-                            <p>No reports generated yet</p>
+                        <div id="reports-list-container" style="padding: 1rem 0;">
+                            <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                                <i class="fas fa-spinner fa-spin"></i> Loading reports...
+                            </div>
                         </div>
                     </div>
                 `;
@@ -264,12 +271,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         contentArea.innerHTML = html;
 
-        function renderProfitRow(label, data, isRevenue = false) {
+        function renderProfitRow(label, data, isRevenue = false, symbol = '') {
             let content = '';
+            
+            // Helper to ensure symbol is displayed
+            const formatValue = (val) => {
+                if (!val || val === '-') return '-';
+                // Avoid double symbol if already present
+                if (val.toString().includes(symbol)) return val;
+                return `${symbol}${val}`;
+            };
             
             if (isRevenue && data) {
                 // Handle single revenue object
-                const val = data.value || '-';
+                const val = formatValue(data.value);
                 const unit = data.unit || '';
                 const per = data.period || '';
                 content = `
@@ -284,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div style="text-align: right; display: flex; flex-direction: column; gap: 4px;">
                         ${data.map(item => `
                             <div>
-                                <span style="font-weight: 600;">${item.value || '-'} ${item.unit || ''}</span>
+                                <span style="font-weight: 600;">${formatValue(item.value)} ${item.unit || ''}</span>
                                 <span style="font-size: 0.75rem; color: #94a3b8; margin-left: 6px;">(${item.period || 'N/A'})</span>
                             </div>
                         `).join('')}
@@ -333,6 +348,19 @@ document.addEventListener('DOMContentLoaded', () => {
             // Helper to format numbers safely
             const fmt = (val) => val !== undefined && val !== null ? val : 'N/A';
             
+            // Helper to get currency symbol
+            const getCurrencySymbol = (code) => {
+                if (!code) return '';
+                const map = {
+                    'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'CNY': '¥', 'INR': '₹',
+                    'CAD': 'C$', 'AUD': 'A$', 'CHF': 'Fr'
+                };
+                return map[code.toUpperCase()] || code;
+            };
+
+            const currencyCode = data.header.currency || 'USD';
+            const currencySymbol = getCurrencySymbol(currencyCode);
+            
             let html = `
                 <div style="display: flex; flex-direction: column; gap: 1.5rem;">
                     
@@ -342,13 +370,21 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div>
                                 <h2 style="margin: 0; color: var(--primary-color);">${fmt(data.header.companyName)}</h2>
                                 <p style="color: var(--text-secondary); margin-top: 0.5rem;">
-                                    Currency: <span style="font-weight: 600;">${fmt(data.header.currency)}</span>
+                                    Currency: <span style="font-weight: 600;">${fmt(currencyCode)} (${currencySymbol})</span>
                                 </p>
                             </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Market Size / Deal Value</div>
-                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--success-color);">
-                                    ${fmt(data.header.dealValue.display)}
+                            <div style="text-align: right; display: flex; flex-direction: column; gap: 0.5rem;">
+                                <div>
+                                    <div style="font-size: 0.875rem; color: var(--text-secondary);">Proposed Deal Value</div>
+                                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary-color);">
+                                        ${currencySymbol} ${fmt(data.header.dealValue.display).toString().replace(currencySymbol, '').trim()}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.875rem; color: var(--text-secondary);">Market Size</div>
+                                    <div style="font-size: 1.25rem; font-weight: 600; color: var(--success-color);">
+                                        ${fmt(data.header.marketSize ? data.header.marketSize.display : 'N/A')}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -387,7 +423,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem;">
                                 <div>
                                     <div style="font-size: 0.875rem; color: var(--text-secondary);">Present Revenue</div>
-                                    <div style="font-size: 1.25rem; font-weight: 600;">${fmt(data.revenue.present.value)} (${fmt(data.revenue.present.period)})</div>
+                                    <div style="font-size: 1.25rem; font-weight: 600;">${currencySymbol}${fmt(data.revenue.present.value).toString().replace(currencySymbol, '')} (${fmt(data.revenue.present.period)})</div>
                                 </div>
                             </div>
 
@@ -395,20 +431,24 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <thead>
                                     <tr style="text-align: left; color: var(--text-secondary);">
                                         <th style="padding-bottom: 0.5rem;">Period</th>
-                                        <th style="padding-bottom: 0.5rem;">Revenue</th>
+                                        <th style="padding-bottom: 0.5rem;">Revenue (${currencySymbol})</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${(data.revenue.history || []).map(h => `
                                         <tr>
                                             <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">${h.period}</td>
-                                            <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9; font-weight: 500;">${h.value} ${h.unit || ''}</td>
+                                            <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9; font-weight: 500;">
+                                                ${currencySymbol}${h.value.toString().replace(currencySymbol, '')} ${h.unit || ''}
+                                            </td>
                                         </tr>
                                     `).join('')}
                                     ${(data.revenue.future || []).map(f => `
                                         <tr style="color: var(--text-secondary);">
                                             <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">${f.period} (E)</td>
-                                            <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">${f.value} ${f.unit || ''}</td>
+                                            <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">
+                                                ${currencySymbol}${f.value.toString().replace(currencySymbol, '')} ${f.unit || ''}
+                                            </td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -432,13 +472,13 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <span>Values (Period)</span>
                                     </div>
                                         
-                                        ${renderProfitRow('Revenue', data.revenue?.present, true)}
-                                        ${renderProfitRow('Gross Profit', data.profitMetrics?.gross_profit)}
-                                        ${renderProfitRow('EBITDA', data.profitMetrics?.ebitda)}
-                                        ${renderProfitRow('Adj. EBITDA', data.profitMetrics?.adjusted_ebitda)}
-                                        ${renderProfitRow('Op. Income', data.profitMetrics?.operating_income)}
-                                        ${renderProfitRow('Net Income', data.profitMetrics?.net_income)}
-                                        ${renderProfitRow('Op. Cash Flow', data.profitMetrics?.operating_cash_flow)}
+                                        ${renderProfitRow(`Revenue (${currencySymbol})`, data.revenue?.present, true, currencySymbol)}
+                                        ${renderProfitRow(`Gross Profit (${currencySymbol})`, data.profitMetrics?.gross_profit, false, currencySymbol)}
+                                        ${renderProfitRow(`EBITDA (${currencySymbol})`, data.profitMetrics?.ebitda, false, currencySymbol)}
+                                        ${renderProfitRow(`Adj. EBITDA (${currencySymbol})`, data.profitMetrics?.adjusted_ebitda, false, currencySymbol)}
+                                        ${renderProfitRow(`Op. Income (${currencySymbol})`, data.profitMetrics?.operating_income, false, currencySymbol)}
+                                        ${renderProfitRow(`Net Income (${currencySymbol})`, data.profitMetrics?.net_income, false, currencySymbol)}
+                                        ${renderProfitRow(`Op. Cash Flow (${currencySymbol})`, data.profitMetrics?.operating_cash_flow, false, currencySymbol)}
                                     </div>
                                 </div>
 
@@ -515,6 +555,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             <p><strong>Industry Position:</strong> ${fmt(data.marketIntelligence.industryPosition)}</p>
                             <p><strong>Market Share:</strong> ${fmt(data.marketIntelligence.marketSharePercent)}</p>
                             
+                            ${data.marketIntelligence.context ? `
+                                <div style="margin-top: 1rem; padding: 0.75rem; background: #f8fafc; border-left: 3px solid #cbd5e1; font-size: 0.85rem; color: var(--text-secondary);">
+                                    <i class="fas fa-quote-left" style="margin-right: 0.5rem; opacity: 0.5;"></i>
+                                    ${data.marketIntelligence.context}
+                                </div>
+                            ` : ''}
+
                             <h4 style="font-size: 0.9rem; margin-top: 1.5rem;">Key Competitors</h4>
                             <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                                 ${(data.marketIntelligence.competitors || []).map(c => `
@@ -526,9 +573,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     </div>
                 </div>
+                
+                <div style="margin-top: 2rem; text-align: center; padding-bottom: 2rem;">
+                    <button id="generate-report-btn" class="btn-primary" style="padding: 0.75rem 2rem; display: inline-flex; align-items: center; gap: 0.5rem;">
+                        <i class="fas fa-file-excel"></i> Generate Excel Report
+                    </button>
+                    <p id="report-status" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary); display: none;"></p>
+                </div>
             `;
             
             container.innerHTML = html;
+
+            // Attach listener for report generation
+            const reportBtn = document.getElementById('generate-report-btn');
+            if (reportBtn) {
+                reportBtn.addEventListener('click', async () => {
+                    const statusEl = document.getElementById('report-status');
+                    try {
+                        reportBtn.disabled = true;
+                        reportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+                        statusEl.style.display = 'block';
+                        statusEl.textContent = 'Generating report...';
+                        statusEl.style.color = 'var(--text-secondary)';
+
+                        const response = await fetch(`${API_URL}/reports/generate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dealId: state.currentDealId })
+                        });
+                        
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            statusEl.textContent = 'Report generated successfully! Check the Reports section.';
+                            statusEl.style.color = 'var(--success-color)';
+                            reportBtn.innerHTML = '<i class="fas fa-check"></i> Generated';
+                            
+                            // Redirect to reports view after a delay
+                            setTimeout(() => {
+                                updateState({ currentView: 'reports' });
+                            }, 1500);
+                        } else {
+                            throw new Error(result.message || 'Failed to generate report');
+                        }
+                    } catch (error) {
+                        console.error('Report generation error:', error);
+                        statusEl.textContent = `Error: ${error.message}`;
+                        statusEl.style.color = 'var(--danger-color)';
+                        reportBtn.disabled = false;
+                        reportBtn.innerHTML = '<i class="fas fa-file-excel"></i> Generate Excel Report';
+                    }
+                });
+            }
         }
 
         // Attach event listeners for specific views
@@ -625,7 +721,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 formData.append('dealValue', dealValueInput.value.trim());
 
                 try {
-                    const response = await fetch('http://localhost:8000/api/documents/upload', {
+                    const response = await fetch(`${API_URL}/documents/upload`, {
                         method: 'POST',
                         body: formData
                     });
@@ -667,7 +763,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         async function loadActiveDeals() {
             try {
-                const response = await fetch('http://localhost:8000/api/deals');
+                const response = await fetch(`${API_URL}/deals`);
                 const result = await response.json();
                 const container = document.getElementById('deals-list-container');
 
@@ -721,9 +817,76 @@ document.addEventListener('DOMContentLoaded', () => {
              }
         }
 
+        if (viewName === 'reports') {
+            loadReports();
+            
+            // Attach refresh listener
+            const refreshBtn = document.getElementById('refresh-reports');
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', loadReports);
+            }
+        }
+
+        async function loadReports() {
+            const container = document.getElementById('reports-list-container');
+            if (!container) return;
+            
+            try {
+                container.innerHTML = `
+                    <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                        <i class="fas fa-spinner fa-spin"></i> Loading reports...
+                    </div>
+                `;
+                
+                const response = await fetch(`${API_URL}/reports`);
+                const result = await response.json();
+                
+                if (result.success && result.reports && result.reports.length > 0) {
+                    container.innerHTML = `
+                        <div style="display: flex; flex-direction: column; gap: 1rem;">
+                            ${result.reports.map(report => `
+                                <div class="card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem;">
+                                    <div style="display: flex; align-items: center; gap: 1rem;">
+                                        <div style="width: 40px; height: 40px; background: #e0f2fe; color: var(--primary-color); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                            <i class="fas fa-file-excel"></i>
+                                        </div>
+                                        <div>
+                                            <div style="font-weight: 600; color: var(--text-primary);">${report.filename}</div>
+                                            <div style="font-size: 0.8rem; color: var(--text-secondary);">
+                                                Generated: ${new Date(report.created_at * 1000).toLocaleString()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <a href="${API_URL}/reports/download/${report.filename}" class="btn-primary" style="padding: 0.5rem 1rem; font-size: 0.875rem; text-decoration: none;">
+                                        <i class="fas fa-download" style="margin-right: 0.5rem;"></i> Download
+                                    </a>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div class="empty-state" style="padding: 3rem; text-align: center;">
+                            <i class="fas fa-file-excel" style="font-size: 3rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                            <p style="color: var(--text-secondary);">No reports generated yet</p>
+                            <p style="font-size: 0.875rem; color: #94a3b8; margin-top: 0.5rem;">Go to Analysis view to generate a report.</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading reports:', error);
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 2rem; color: var(--danger-color);">
+                        <i class="fas fa-exclamation-circle" style="margin-bottom: 0.5rem;"></i>
+                        <p>Failed to load reports. Please try again.</p>
+                    </div>
+                `;
+            }
+        }
+
         async function loadDealsForSelector() {
             try {
-                const response = await fetch('http://localhost:8000/api/deals');
+                const response = await fetch(`${API_URL}/deals`);
                 const result = await response.json();
                 const selector = document.getElementById('deal-selector');
                 const badge = document.getElementById('deals-count-badge');
@@ -766,7 +929,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
 
             try {
-                const response = await fetch(`http://localhost:8000/api/analysis/${dealId}`);
+                const response = await fetch(`${API_URL}/analysis/${dealId}`);
                 const result = await response.json();
 
                 if (result.success && result.data && Object.keys(result.data).length > 0) {

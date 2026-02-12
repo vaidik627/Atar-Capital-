@@ -25,7 +25,7 @@ from .schema import get_extraction_schema, validate_schema
 # MAIN EXTRACTION FUNCTION
 # ============================================================================
 
-def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = None, source_path: str = None) -> Dict[str, Any]:
+def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = None, source_path: str = None, user_deal_value: str = None) -> Dict[str, Any]:
     """
     Extract financial metrics from OCR text and return structured JSON schema.
     
@@ -38,17 +38,18 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
     6. Return JSON data
     
     Args:
-        ocr_text (str): Raw text extracted from PDF via OCR
-        api_key (str, optional): LLM API key (defaults to config)
-        deal_id (str, optional): Deal identifier for file naming
-        source_path (str, optional): Path to the source text file
-        
+    ocr_text (str): Raw text extracted from PDF via OCR
+    api_key (str, optional): LLM API key (defaults to config)
+    deal_id (str, optional): Deal identifier for file naming
+    source_path (str, optional): Path to the source text file
+    user_deal_value (str, optional): The user-inputted deal value for AI context
+    
     Returns:
-        dict: Structured financial data matching schema.py format
-        
+    dict: Structured financial data matching schema.py format
+    
     Raises:
-        ValueError: Invalid input (empty text, missing API key)
-        RuntimeError: API call or processing failure
+    ValueError: Invalid input (empty text, missing API key)
+    RuntimeError: API call or processing failure
     """
     print("\n" + "="*80)
     print("🤖 FINANCIAL EXTRACTION ENGINE - STARTED")
@@ -100,6 +101,10 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
     try:
         start_time = time.time()
         
+        user_context = ""
+        if user_deal_value:
+            user_context = f"\n\n**USER CONTEXT:**\nThe user is considering this deal at a valuation of: {user_deal_value}.\nPlease use this valuation when making your AI Recommendation (Buy/Hold/Sell) and determining if it's a good investment based on the extracted financial metrics."
+
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
@@ -109,7 +114,7 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
                 },
                 {
                     "role": "user", 
-                    "content": f"Extract all financial metrics from this document:\n\n{ocr_text}"
+                    "content": f"Extract all financial metrics from this document:{user_context}\n\n{ocr_text}"
                 }
             ],
             response_format={"type": "json_object"},  # Force JSON output
@@ -336,7 +341,8 @@ You must return data matching this exact structure:
 **EXTRACTION GUIDELINES:**
 
 1. **Company Information:**
-   - Extract company name, currency (USD/EUR/GBP etc.)
+   - Extract company name
+   - Extract currency code (e.g., "USD", "EUR", "GBP"). If not explicitly stated, infer from symbols ($ -> USD, € -> EUR, £ -> GBP).
    - Write a concise company summary (2-3 sentences)
    - Note where you found this information (source_context)
 
@@ -357,11 +363,14 @@ You must return data matching this exact structure:
    - Store as arrays with `period`, `value` (number), `unit`, `source_context`.
    - Ensure you capture the *exact* fiscal period (e.g., "FY23", "Q1 24", "LTM Sep 23").
 
-4. **Market Intelligence:**
-   - Market size and growth rate
-   - Company's market share and industry position
-   - List key competitors
-   - Market trends, customer base, geographic presence
+4. **Market Intelligence (HIGH PRIORITY):**
+   - **Industry Position:** Explicitly state the company's rank (e.g., "#1 in US", "Market Leader"). If not stated, infer from context (e.g., "leading provider" -> "Top Tier").
+   - **Market Share:** Extract percentage (e.g., "15% share"). If exact number is missing but descriptive text exists (e.g., "dominant share", "majority of market"), use that phrase.
+   - **Competitors:** Extract ALL named competitors. If none are named, look for "competition" sections and summarize descriptions.
+   - **Market Trends:** Extract key growth drivers and headwinds.
+   - **Customer Base:** Summarize target audience (e.g., "Fortune 500", "SMEs").
+   - **Geographic Presence:** List regions/countries of operation.
+   - **Context:** Always provide the source text context for these findings to verify accuracy.
 
 5. **Risk Analysis (CRITICAL SECTION):**
    - You MUST identify and categorize risks. If a section titled "Risks" is missing, **INFER** risks from the context (e.g., "highly competitive market" -> Market Risk, "dependent on key suppliers" -> Operational Risk).
