@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+
+# Data
+backend/extracted_data/
+backend/parsed_text/
+
+# Secrets
+backend/credentials.json
+
+# OS
+.DS_Store
+Thumbs.db
