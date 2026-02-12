@@ -134,6 +134,8 @@ def get_analysis(deal_id):
 @app.route('/api/documents/upload', methods=['POST'])
 def process_document():
     deal_id = request.form.get('dealId') # Frontend sends dealId in FormData
+    deal_name = request.form.get('dealName')
+    deal_value = request.form.get('dealValue')
     
     if 'file' not in request.files:
         # Check for 'document' or 'documents' field as well for compatibility
@@ -150,6 +152,20 @@ def process_document():
         return jsonify({"success": False, "message": "No selected file"}), 400
     
     try:
+        # Generate deal_id if not provided
+        if not deal_id:
+            deal_id = f"deal_{int(time.time())}_{int(os.urandom(4).hex(), 16)}"
+            
+        # Register/Update Deal in Mock DB
+        DEALS[deal_id] = {
+            "id": deal_id,
+            "name": deal_name if deal_name else f"Deal {deal_id}",
+            "value": deal_value if deal_value else "N/A",
+            "status": "Processing",
+            "date": time.strftime("%Y-%m-%d"),
+            "file_name": file.filename
+        }
+        
         # 1. OCR Extraction
         file_content = file.read()
         mime_type = file.mimetype or 'application/pdf'
@@ -184,6 +200,10 @@ def process_document():
             "ocr_text_preview": ocr_text[:500]
         }
         
+        # Update Deal Status
+        if extraction_deal_id in DEALS:
+            DEALS[extraction_deal_id]["status"] = "Active"
+
         return jsonify({
             "success": True,
             "dealId": extraction_deal_id,

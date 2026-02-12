@@ -15,7 +15,7 @@ load_dotenv()
 # OpenAI API Configuration
 LLM_API_KEY = os.environ.get('OPENAI_API_KEY')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'openai/gpt-oss-120b')
-LLM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+LLM_BASE_URL = os.environ.get('LLM_BASE_URL', "https://integrate.api.nvidia.com/v1")
 
 # For NVIDIA API:
 # LLM_API_KEY = 'nvapi-...'

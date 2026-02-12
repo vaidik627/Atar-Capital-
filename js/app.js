@@ -147,21 +147,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'upload':
                 html = `
-                    <div class="card" style="max-width: 800px; margin: 0 auto; text-align: center; padding: 4rem 2rem;">
-                        <i class="fas fa-cloud-upload-alt" style="font-size: 4rem; color: #cbd5e1; margin-bottom: 1.5rem;"></i>
-                        <h3 style="margin-bottom: 1rem;">Upload Deal Documents</h3>
-                        <p style="color: #64748b; margin-bottom: 2rem;">Drag and drop PDF files here or click to browse</p>
+                    <div class="card" style="max-width: 800px; margin: 0 auto; padding: 2rem;">
+                        <h3 style="margin-bottom: 1.5rem; text-align: center;">Upload New Deal</h3>
                         
-                        <form id="upload-form" style="display: none;">
+                        <div class="form-group" style="margin-bottom: 1.5rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary);">Deal Name</label>
+                            <input type="text" id="deal-name-input" placeholder="e.g. Project Manta Ray" class="input-wrapper" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px;">
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 2rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary);">Deal Value</label>
+                            <input type="text" id="deal-value-input" placeholder="e.g. $50M" class="input-wrapper" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px;">
+                        </div>
+
+                        <div id="drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 3rem; text-align: center; cursor: pointer; transition: all 0.2s; background: #f8fafc;">
+                            <i class="fas fa-cloud-upload-alt" style="font-size: 3rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                            <p style="color: #64748b; margin-bottom: 0.5rem;">Drag and drop PDF files here or click to browse</p>
+                            <span class="btn-secondary" style="pointer-events: none;">Select File</span>
                             <input type="file" id="file-input" accept=".pdf" style="display: none;">
-                        </form>
+                        </div>
                         
-                        <div id="upload-status" style="margin-top: 1rem; display: none;">
+                        <div id="file-preview" style="margin-top: 1.5rem; display: none; align-items: center; justify-content: space-between; padding: 1rem; background: #fff; border: 1px solid var(--border-color); border-radius: 6px;">
+                            <div style="display: flex; align-items: center; gap: 1rem;">
+                                <i class="fas fa-file-pdf" style="color: #ef4444; font-size: 1.5rem;"></i>
+                                <span id="file-name" style="font-weight: 500;">filename.pdf</span>
+                            </div>
+                            <button id="remove-file" style="background: none; border: none; color: #94a3b8; cursor: pointer;"><i class="fas fa-times"></i></button>
+                        </div>
+
+                        <div id="upload-status" style="margin-top: 1.5rem; display: none;">
                             <div class="spinner" style="margin-bottom: 0.5rem;"><i class="fas fa-spinner fa-spin"></i> Processing...</div>
                             <div class="status-text">Uploading and extracting data...</div>
                         </div>
 
-                        <button id="select-files-btn" class="btn-primary" style="max-width: 200px; margin: 0 auto;">Select Files</button>
+                        <button id="upload-submit-btn" class="btn-primary" style="width: 100%; margin-top: 2rem;" disabled>Upload & Analyze</button>
                     </div>
                 `;
                 break;
@@ -169,31 +188,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 html = `
                     <div class="card">
                         <div class="section-header">
-                            <h3>Your Deals</h3>
-                            <button class="btn-secondary"><i class="fas fa-plus"></i> New Deal</button>
+                            <h3>Active Deals</h3>
+                            <button class="btn-secondary" onclick="document.querySelector('[data-view=\\'upload\\']').click()"><i class="fas fa-plus"></i> New Deal</button>
                         </div>
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr style="border-bottom: 1px solid #e2e8f0; text-align: left;">
-                                    <th style="padding: 1rem; color: #64748b; font-weight: 500;">Deal Name</th>
-                                    <th style="padding: 1rem; color: #64748b; font-weight: 500;">Status</th>
-                                    <th style="padding: 1rem; color: #64748b; font-weight: 500;">Date</th>
-                                    <th style="padding: 1rem; color: #64748b; font-weight: 500;">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td colspan="4" style="padding: 3rem; text-align: center; color: #94a3b8;">
-                                        No active deals found. Upload a document to start.
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                        <div id="deals-list-container">
+                             <div style="padding: 3rem; text-align: center; color: #94a3b8;">
+                                <i class="fas fa-spinner fa-spin"></i> Loading deals...
+                            </div>
+                        </div>
                     </div>
                 `;
                 break;
             case 'analysis':
                 html = `
+                    <div style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+                         <div style="display: flex; align-items: center; gap: 1rem;">
+                            <label style="font-weight: 500; color: var(--text-secondary);">Select Deal:</label>
+                            <select id="deal-selector" style="padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; min-width: 250px;">
+                                <option value="">-- Select a Deal --</option>
+                            </select>
+                         </div>
+                         <div id="deals-count-badge" class="badge" style="background: var(--primary-color); color: white; padding: 0.5rem 1rem;">
+                            0 Deals Uploaded
+                         </div>
+                    </div>
+
                     <div id="analysis-content">
                         <div class="card">
                             <div class="empty-state" style="padding: 4rem;">
@@ -250,33 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loadAnalysisData(state.currentDealId);
         }
 
-        async function loadAnalysisData(dealId) {
-            try {
-                const response = await fetch(`http://localhost:8000/api/analysis/${dealId}`);
-                const result = await response.json();
 
-                if (result.success && result.data && Object.keys(result.data).length > 0) {
-                    renderAnalysisDashboard(result.data);
-                } else {
-                    document.getElementById('analysis-content').innerHTML = `
-                        <div class="card">
-                            <div class="empty-state" style="padding: 4rem; text-align: center;">
-                                <i class="fas fa-exclamation-circle" style="font-size: 3rem; color: #ef4444; margin-bottom: 1rem;"></i>
-                                <p>Analysis data not found or still processing.</p>
-                                <button class="btn-secondary" onclick="renderView('analysis')" style="margin-top: 1rem;">Retry</button>
-                            </div>
-                        </div>
-                    `;
-                }
-            } catch (error) {
-                console.error('Error fetching analysis:', error);
-                document.getElementById('analysis-content').innerHTML = `
-                     <div class="card">
-                        <p style="color: #ef4444;">Error loading analysis: ${error.message}</p>
-                    </div>
-                `;
-            }
-        }
 
         function renderAnalysisDashboard(data) {
             const container = document.getElementById('analysis-content');
@@ -491,35 +484,98 @@ document.addEventListener('DOMContentLoaded', () => {
             container.innerHTML = html;
         }
 
+        // Attach event listeners for specific views
         if (viewName === 'upload') {
-            const selectFilesBtn = document.getElementById('select-files-btn');
+            const dropZone = document.getElementById('drop-zone');
             const fileInput = document.getElementById('file-input');
+            const filePreview = document.getElementById('file-preview');
+            const fileNameSpan = document.getElementById('file-name');
+            const removeFileBtn = document.getElementById('remove-file');
+            const uploadBtn = document.getElementById('upload-submit-btn');
+            const dealNameInput = document.getElementById('deal-name-input');
+            const dealValueInput = document.getElementById('deal-value-input');
             const uploadStatus = document.getElementById('upload-status');
             const statusText = uploadStatus.querySelector('.status-text');
 
-            selectFilesBtn.addEventListener('click', () => {
-                fileInput.click();
+            let selectedFile = null;
+
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFileSelection(e.target.files[0]);
+                }
             });
 
-            fileInput.addEventListener('change', async (e) => {
-                if (e.target.files.length > 0) {
-                    const file = e.target.files[0];
-                    await uploadFile(file);
+            // Drag and drop handlers
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.style.background = '#f1f5f9';
+                dropZone.style.borderColor = 'var(--primary-color)';
+            });
+
+            dropZone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dropZone.style.background = '#f8fafc';
+                dropZone.style.borderColor = 'var(--border-color)';
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.style.background = '#f8fafc';
+                dropZone.style.borderColor = 'var(--border-color)';
+                
+                if (e.dataTransfer.files.length > 0) {
+                    handleFileSelection(e.dataTransfer.files[0]);
                 }
+            });
+
+            function handleFileSelection(file) {
+                if (file.type !== 'application/pdf') {
+                    alert('Please select a PDF file.');
+                    return;
+                }
+                selectedFile = file;
+                fileNameSpan.textContent = file.name;
+                dropZone.style.display = 'none';
+                filePreview.style.display = 'flex';
+                validateForm();
+            }
+
+            removeFileBtn.addEventListener('click', () => {
+                selectedFile = null;
+                fileInput.value = '';
+                filePreview.style.display = 'none';
+                dropZone.style.display = 'block';
+                validateForm();
+            });
+
+            [dealNameInput, dealValueInput].forEach(input => {
+                input.addEventListener('input', validateForm);
+            });
+
+            function validateForm() {
+                const isValid = selectedFile && dealNameInput.value.trim() && dealValueInput.value.trim();
+                uploadBtn.disabled = !isValid;
+                uploadBtn.style.opacity = isValid ? '1' : '0.5';
+            }
+
+            uploadBtn.addEventListener('click', async () => {
+                if (!selectedFile) return;
+                await uploadFile(selectedFile);
             });
 
             async function uploadFile(file) {
                 // Show loading state
-                selectFilesBtn.disabled = true;
-                selectFilesBtn.style.opacity = '0.5';
+                uploadBtn.disabled = true;
+                uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
                 uploadStatus.style.display = 'block';
-                statusText.textContent = `Uploading ${file.name}...`;
+                statusText.textContent = `Uploading ${file.name} and extracting data...`;
 
                 const formData = new FormData();
                 formData.append('document', file);
-                // Generate a temporary deal ID if none exists
-                const dealId = 'deal_' + Date.now();
-                formData.append('dealId', dealId);
+                formData.append('dealName', dealNameInput.value.trim());
+                formData.append('dealValue', dealValueInput.value.trim());
 
                 try {
                     const response = await fetch('http://localhost:8000/api/documents/upload', {
@@ -538,14 +594,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         statusText.style.color = '#10b981';
                         
                         // Store deal ID and redirect to analysis
-                        state.currentDealId = result.dealId || dealId;
+                        state.currentDealId = result.dealId;
                         
                         setTimeout(() => {
                             alert('Document uploaded and processed successfully! Redirecting to analysis...');
-                            // Update sidebar active state manually since renderView doesn't do it
-                            document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-                            document.querySelector('[data-view="analysis"]').classList.add('active');
-                            renderView('analysis'); 
+                            document.querySelector('[data-view="analysis"]').click();
                         }, 1000);
                     } else {
                         throw new Error(result.message || 'Unknown error occurred');
@@ -555,10 +608,140 @@ document.addEventListener('DOMContentLoaded', () => {
                     console.error('Error:', error);
                     statusText.textContent = `Error: ${error.message}`;
                     statusText.style.color = '#ef4444';
-                } finally {
-                    selectFilesBtn.disabled = false;
-                    selectFilesBtn.style.opacity = '1';
+                    uploadBtn.disabled = false;
+                    uploadBtn.innerHTML = 'Retry Upload';
                 }
+            }
+        }
+
+        if (viewName === 'active-deals') {
+            loadActiveDeals();
+        }
+
+        async function loadActiveDeals() {
+            try {
+                const response = await fetch('http://localhost:8000/api/deals');
+                const result = await response.json();
+                const container = document.getElementById('deals-list-container');
+
+                if (result.success && result.deals && result.deals.length > 0) {
+                    container.innerHTML = `
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem;">
+                            ${result.deals.map(deal => `
+                                <div class="card" style="transition: transform 0.2s; cursor: pointer;" onclick="window.loadDealAnalysis('${deal.id}')">
+                                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                                        <div style="width: 40px; height: 40px; background: #e0f2fe; color: var(--primary-color); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+                                            ${deal.name.substring(0, 2).toUpperCase()}
+                                        </div>
+                                        <span class="badge" style="background: #dcfce7; color: #166534; padding: 0.25rem 0.5rem; border-radius: 99px; font-size: 0.75rem;">${deal.status}</span>
+                                    </div>
+                                    <h3 style="margin-bottom: 0.5rem; font-size: 1.1rem;">${deal.name}</h3>
+                                    <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+                                        <i class="fas fa-tag" style="margin-right: 0.5rem;"></i> ${deal.value}
+                                    </p>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #f1f5f9; padding-top: 1rem; font-size: 0.875rem; color: #94a3b8;">
+                                        <span><i class="far fa-calendar-alt"></i> ${deal.date}</span>
+                                        <span style="color: var(--primary-color); font-weight: 500;">View Analysis &rarr;</span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 3rem; color: #94a3b8;">
+                            <i class="fas fa-folder-open" style="font-size: 3rem; margin-bottom: 1rem;"></i>
+                            <p>No active deals found. Upload a document to create a new deal.</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading deals:', error);
+                document.getElementById('deals-list-container').innerHTML = `<p style="color: #ef4444; text-align: center;">Error loading deals.</p>`;
+            }
+        }
+
+        // Global helper for deal click
+        window.loadDealAnalysis = (dealId) => {
+             state.currentDealId = dealId;
+             document.querySelector('[data-view="analysis"]').click();
+        };
+
+        if (viewName === 'analysis') {
+             loadDealsForSelector();
+             if (state.currentDealId) {
+                 loadAnalysisData(state.currentDealId);
+             }
+        }
+
+        async function loadDealsForSelector() {
+            try {
+                const response = await fetch('http://localhost:8000/api/deals');
+                const result = await response.json();
+                const selector = document.getElementById('deal-selector');
+                const badge = document.getElementById('deals-count-badge');
+
+                if (result.success && result.deals) {
+                    badge.textContent = `${result.deals.length} Deals Uploaded`;
+                    
+                    selector.innerHTML = '<option value="">-- Select a Deal --</option>' + 
+                        result.deals.map(deal => `<option value="${deal.id}" ${state.currentDealId === deal.id ? 'selected' : ''}>${deal.name}</option>`).join('');
+                    
+                    selector.addEventListener('change', (e) => {
+                        const dealId = e.target.value;
+                        if (dealId) {
+                            state.currentDealId = dealId;
+                            loadAnalysisData(dealId);
+                        } else {
+                            state.currentDealId = null;
+                            document.getElementById('analysis-content').innerHTML = `
+                                <div class="card"><div class="empty-state" style="padding: 4rem; text-align: center;">
+                                    <i class="fas fa-chart-line" style="font-size: 3rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                                    <p>Select a deal to view detailed analysis</p>
+                                </div></div>`;
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("Error loading deals for selector", e);
+            }
+        }
+
+        async function loadAnalysisData(dealId) {
+            const container = document.getElementById('analysis-content');
+            container.innerHTML = `
+                <div class="card">
+                    <div class="empty-state" style="padding: 4rem; text-align: center;">
+                         <i class="fas fa-spinner fa-spin" style="font-size: 3rem; color: var(--secondary-color); margin-bottom: 1rem;"></i>
+                         <p>Loading analysis data...</p>
+                    </div>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(`http://localhost:8000/api/analysis/${dealId}`);
+                const result = await response.json();
+
+                if (result.success && result.data && Object.keys(result.data).length > 0) {
+                    renderAnalysisDashboard(result.data);
+                } else {
+                    container.innerHTML = `
+                        <div class="card">
+                            <div class="empty-state" style="padding: 4rem; text-align: center;">
+                                <i class="fas fa-exclamation-circle" style="font-size: 3rem; color: #ef4444; margin-bottom: 1rem;"></i>
+                                <p>Analysis data not found or still processing.</p>
+                                <button class="btn-secondary" onclick="loadAnalysisData('${dealId}')" style="margin-top: 1rem;">Retry</button>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error fetching analysis:', error);
+                container.innerHTML = `
+                     <div class="card">
+                        <p style="color: #ef4444;">Error loading analysis: ${error.message}</p>
+                    </div>
+                `;
             }
         }
     }
