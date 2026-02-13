@@ -4,10 +4,9 @@ import os
 import time
 import traceback
 import json
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from .ocr_service import extract_text_from_file
 from .extraction import extract_financial_data, load_extracted_data, extract_pre_bid_analysis
+from .report_generator import generate_csv_report
 
 app = Flask(__name__, static_folder='../')
 CORS(app)
@@ -189,7 +188,9 @@ def get_analysis(deal_id):
             "confidence": extracted_data.get('ai_suggestion', {}).get('confidence_percent'),
             "rationale": extracted_data.get('ai_suggestion', {}).get('rationale'),
             "visible": True
-        }
+        },
+        "financialMatrix": extracted_data.get('financial_matrix', []),
+        "cashFlowMatrix": extracted_data.get('cash_flow_matrix', [])
     }
 
     return jsonify({
@@ -287,418 +288,66 @@ def process_document():
 def health_check():
     return jsonify({"status": "healthy", "service": "Financial Extraction Engine"})
 
-@app.route('/api/reports/generate', methods=['POST'])
-def generate_report():
+# --- Report Generation Endpoints ---
+
+@app.route('/api/reports/generate/<deal_id>', methods=['POST'])
+def generate_report(deal_id):
     try:
-        data = request.json
-        deal_id = data.get('dealId')
-        
-        # 1. Fetch OCR Text
-        parsed_text_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'parsed_text')
-        ocr_text = ""
-        # Find the latest OCR file for this deal
-        # Heuristic: search for files containing the deal_id or just pick the latest one if we can't link easily
-        # In process_document, we saved as f"{int(time.time())}_{file.filename}.txt"
-        # We might not have a direct link from deal_id to filename in the current mock DB setup easily unless we stored it.
-        # Check DEALS
-        deal_info = DEALS.get(deal_id)
-        if deal_info and deal_info.get('file_name'):
-             # Try to find file with this name
-             target_name = deal_info.get('file_name')
-             # Scan dir
-             files = os.listdir(parsed_text_dir)
-             matching_files = [f for f in files if target_name in f]
-             if matching_files:
-                 # Sort by time (prefix)
-                 matching_files.sort(reverse=True)
-                 with open(os.path.join(parsed_text_dir, matching_files[0]), 'r', encoding='utf-8') as f:
-                     ocr_text = f.read()
-        
-        # Fallback: if no deal specific text found, check if we can use any recent text (for demo)
-        if not ocr_text:
-             print(f"Warning: No specific OCR text found for deal {deal_id}, using dummy empty text or skipping extraction.")
-
-        # 2. Extract Pre-Bid Analysis Data
-        pre_bid_data = {}
-        if ocr_text:
-            try:
-                print(f"Extracting Pre-Bid Analysis for deal {deal_id}...")
-                pre_bid_data = extract_pre_bid_analysis(ocr_text, deal_id)
-            except Exception as e:
-                print(f"Pre-Bid Extraction failed: {e}")
-        
-        # Initialize Workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Pre-Bid Analysis"
-        
-        # --- Styles ---
-        bold_font = Font(bold=True)
-        header_font = Font(bold=True, size=12)
-        title_font = Font(bold=True, size=14)
-        center_align = Alignment(horizontal='center')
-        left_align = Alignment(horizontal='left')
-        right_align = Alignment(horizontal='right')
-        
-        # Red fill for Atar Projections (light red/pink)
-        red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
-        # Blue fill for Management Projections (light blue)
-        blue_fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
-        # Grey fill for headers
-        grey_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
-        
-        # --- Section 1: Inputs (Left Panel) ---
-        
-        # Title
-        ws['D2'] = "Project Manta Ray Pre-Bid Analysis"
-        ws['D2'].font = title_font
-        ws['D3'] = deal_id
-        
-        # Helpers to safely get data
-        summary = pre_bid_data.get('summary', {}).get('atar_equity', {})
-        sources = pre_bid_data.get('sources_and_uses', {}).get('sources', {})
-        uses = pre_bid_data.get('sources_and_uses', {}).get('uses', {})
-        returns = pre_bid_data.get('shareholder_returns', {}).get('exit', {})
-        distribution = pre_bid_data.get('distribution_of_proceeds', {})
-
-        # Base Inputs
-        ws['A4'] = "Base Inputs"
-        ws['A4'].font = bold_font
-        
-        # Mapping some extracted values to Base Inputs if applicable
-        # The template has specific rows. We'll fill what we can match or keep blank/default.
-        # WC Availability is in Uses
-        
-        base_inputs = [
-            ("WC Availability", uses.get('wc_availability')),
-            ("Debt Sourcing Fees", 0), # Not in schema
-            ("Diligence Fees", 0),
-            ("Atar Transaction Fees", uses.get('transaction_fees')),
-            ("FCCR", 0),
-            ("SOFR", 0)
-        ]
-        
-        for i, (label, val) in enumerate(base_inputs, start=5):
-            ws[f'A{i}'] = label
-            if val is not None:
-                ws[f'B{i}'] = val
-            ws[f'B{i}'].alignment = center_align
-            ws[f'B{i}'].fill = blue_fill
+        # 1. Load data
+        extracted_data = load_extracted_data(deal_id)
+        if not extracted_data:
+            return jsonify({"success": False, "message": "Deal data not found"}), 404
             
-        # Financing Inputs
-        ws['A12'] = "Financing Inputs"
-        ws['A12'].font = bold_font
+        # 2. Get deal name
+        deal_name = DEALS.get(deal_id, {}).get('name', f'Deal_{deal_id}')
         
-        financing_inputs = [
-            "Equity",
-            "Revolver",
-            "Revolver",
-            "Term Loan",
-            "Term Loan",
-            "Structure",
-            "Structure",
-            "Structure"
-        ]
+        # 3. Generate CSV
+        filename = generate_csv_report(deal_id, deal_name, extracted_data)
         
-        for i, label in enumerate(financing_inputs, start=13):
-            ws[f'A{i}'] = label
-            # ws[f'B{i}'] = val 
-            # ws[f'C{i}'] = pct 
-            
-        # Financial Projections Selection
-        ws['A24'] = "Financial Projections"
-        ws['A24'].font = bold_font
-        ws['B24'] = "Atar"
-        ws['B24'].fill = blue_fill
+        return jsonify({
+            "success": True,
+            "filename": filename,
+            "message": "Report generated successfully"
+        })
         
-        # Purchase Assumptions
-        ws['B26'] = "Purchase Assumptions"
-        ws['B26'].font = bold_font
-        ws['B27'] = "EBITDA"
-        ws['C27'] = "Multiple"
-        # ws['B28'] = "$23,000" 
-        # ws['C28'] = "3.0x"    
-        
-        # Exit Assumptions
-        ws['B32'] = "Exit Assumptions"
-        ws['B32'].font = bold_font
-        ws['B33'] = "EBITDA"
-        ws['C33'] = "Multiple"
-        # ws['B34'] = "$35,000" 
-        # ws['C34'] = "3.0x"    
-        
-        # Shareholder Returns
-        ws['D32'] = "Shareholder Returns"
-        ws['D32'].font = bold_font
-        
-        shareholder_rows = [
-            ("Exit", None),
-            ("EV @ Exit", returns.get('ev_at_exit')),
-            ("+ Cash", returns.get('plus_cash')),
-            ("- Debt", returns.get('less_debt')),
-            ("- Expenses", returns.get('less_expenses')),
-            ("- Mgmt LTIP", returns.get('less_mgmt_ltip')),
-            ("- Seller Equity", returns.get('less_seller_equity')),
-            ("Atar Equity", returns.get('atar_equity'))
-        ]
-        
-        for i, (label, val) in enumerate(shareholder_rows, start=33):
-            ws[f'D{i}'] = label
-            if val is not None:
-                ws[f'F{i}'] = val
-        
-        # Distribution of Proceeds
-        ws['D42'] = "Distribution of Proceeds"
-        ws['D42'].font = bold_font
-        
-        dist_rows = [
-            ("Return of Equity", distribution.get('return_of_equity')),
-            ("Interest on Preferred Shares", distribution.get('interest_on_preferred_shares')),
-            ("LP Split of Proceeds", distribution.get('lp_split_of_proceeds')),
-            ("LP Total Distribution", distribution.get('lp_total_distribution')),
-            ("LP MOIC", distribution.get('lp_moic')),
-            ("GP Split of Proceeds", distribution.get('gp_split_of_proceeds'))
-        ]
-        
-        for i, (label, val) in enumerate(dist_rows, start=43):
-            ws[f'D{i}'] = label
-            if val is not None:
-                ws[f'F{i}'] = val
-
-        # --- NEW SECTION: Sources & Uses (from extraction) ---
-        # We can place this around the inputs or summary area
-        # Let's put it below Base Inputs, shifting Financing Inputs down if needed, 
-        # or just place it in a new area. 
-        # Given the user's template image, "Summary" and "Sources & Uses" seem to be top level blocks.
-        # Let's put "Summary" and "Sources & Uses" in columns G-I (between Inputs and Financials) or 
-        # overwrite the "Financing Inputs" area if that's what the user implies by "this is the template".
-        # For now, I'll add them to a new block starting at Row 4, Column G (7)
-        
-        # Summary
-        ws['G4'] = "Summary"
-        ws['G4'].font = bold_font
-        ws['G5'] = "Atar Equity"
-        ws['G5'].font = bold_font
-        ws['G6'] = "Equity @ Close"
-        ws['H6'] = summary.get('equity_at_close')
-        ws['G7'] = "Capital Call"
-        ws['H7'] = summary.get('capital_call')
-        ws['G8'] = "Total Atar Equity"
-        ws['H8'] = summary.get('total_atar_equity')
-        ws['H8'].font = bold_font
-        
-        # Sources & Uses
-        ws['G11'] = "Sources & Uses"
-        ws['G11'].font = bold_font
-        
-        ws['G12'] = "Sources"
-        ws['G12'].font = bold_font
-        
-        s_sources = [
-            ("Equity @ Close", sources.get('equity_at_close')),
-            ("AR", sources.get('ar')),
-            ("Inventory", sources.get('inventory')),
-            ("PP&E", sources.get('ppe')),
-            ("Other", sources.get('other')),
-            ("Earnout", sources.get('earnout')),
-            ("Seller Roll", sources.get('seller_roll'))
-        ]
-        
-        row_idx = 13
-        for label, val in s_sources:
-            ws[f'G{row_idx}'] = label
-            ws[f'H{row_idx}'] = val
-            row_idx += 1
-            
-        ws[f'G{row_idx}'] = "Total Sources"
-        ws[f'G{row_idx}'].font = bold_font
-        ws[f'H{row_idx}'] = sources.get('total_sources')
-        ws[f'H{row_idx}'].font = bold_font
-        row_idx += 2
-        
-        ws[f'G{row_idx}'] = "Uses"
-        ws[f'G{row_idx}'].font = bold_font
-        row_idx += 1
-        
-        s_uses = [
-            ("Purchase Price", uses.get('purchase_price')),
-            ("WC Availability", uses.get('wc_availability')),
-            ("Transaction Fees", uses.get('transaction_fees'))
-        ]
-        
-        for label, val in s_uses:
-            ws[f'G{row_idx}'] = label
-            ws[f'H{row_idx}'] = val
-            row_idx += 1
-            
-        ws[f'G{row_idx}'] = "Total Uses"
-        ws[f'G{row_idx}'].font = bold_font
-        ws[f'H{row_idx}'] = uses.get('total_uses')
-        ws[f'H{row_idx}'].font = bold_font
-            
-        # --- Section 2: Financial Model (Right Panel) ---
-        
-        # Columns Configuration
-        # K: Labels
-        # L-O: Actuals (2019A-2022A)
-        # P-T: Atar Projections (2023 R - 2027 R)
-        # U-Y: Mgmt Projections (2023 M - 2027 M)
-        
-        # Headers
-        ws['K2'] = "Financials"
-        ws['K2'].font = bold_font
-        
-        ws.merge_cells('L2:O2')
-        ws['L2'] = "Actual"
-        ws['L2'].alignment = center_align
-        ws['L2'].font = bold_font
-        
-        ws.merge_cells('P2:T2')
-        ws['P2'] = "Atar Projections"
-        ws['P2'].alignment = center_align
-        ws['P2'].font = bold_font
-        ws['P2'].fill = red_fill
-        
-        ws.merge_cells('U2:Y2')
-        ws['U2'] = "Management Projections"
-        ws['U2'].alignment = center_align
-        ws['U2'].font = bold_font
-        ws['U2'].fill = blue_fill
-        
-        # Years Row
-        years_actual = ["2019A", "2020A", "2021A", "2022A"]
-        years_atar = ["2023 R", "2024 R", "2025 R", "2026 R", "2027 R"]
-        years_mgmt = ["2023 M", "2024 M", "2025 M", "2026 M", "2027 M"]
-        
-        col_idx = 12 # Column L
-        for y in years_actual:
-            cell = ws.cell(row=3, column=col_idx, value=y)
-            cell.alignment = center_align
-            cell.font = bold_font
-            col_idx += 1
-            
-        for y in years_atar:
-            cell = ws.cell(row=3, column=col_idx, value=y)
-            cell.alignment = center_align
-            cell.font = bold_font
-            cell.fill = red_fill
-            col_idx += 1
-            
-        for y in years_mgmt:
-            cell = ws.cell(row=3, column=col_idx, value=y)
-            cell.alignment = center_align
-            cell.font = bold_font
-            cell.fill = blue_fill
-            col_idx += 1
-            
-        # Financial Rows
-        financial_labels = [
-            "Net Revenue",
-            "% Growth",
-            "",
-            "Gross Profit",
-            "% Margin",
-            "",
-            "Operating Expenses",
-            "% Growth",
-            "",
-            "Reported EBITDA",
-            "Adjustments",
-            "Adj. EBITDA",
-            "% Margin"
-        ]
-        
-        start_row = 4
-        for i, label in enumerate(financial_labels):
-            ws.cell(row=start_row + i, column=11, value=label) # Column K
-            
-        # Tale of The Tape
-        tape_start = start_row + len(financial_labels) + 2
-        ws.cell(row=tape_start, column=11, value="Tale of The Tape").font = bold_font
-        
-        tape_labels = [
-            "Adj. EBITDA",
-            "Capex",
-            "Change in WC",
-            "1x Costs",
-            "Free Cash Flow"
-        ]
-        
-        for i, label in enumerate(tape_labels):
-            ws.cell(row=tape_start + 1 + i, column=11, value=label)
-            
-        # Interest
-        interest_start = tape_start + len(tape_labels) + 2
-        ws.cell(row=interest_start, column=11, value="Interest").font = bold_font
-        
-        interest_labels = [
-            "Revolver",
-            "Term Loan",
-            "Seller Note",
-            "Interest Subtotal"
-        ]
-        
-        for i, label in enumerate(interest_labels):
-            ws.cell(row=interest_start + 1 + i, column=11, value=label)
-            
-        # Amortization
-        amort_start = interest_start + len(interest_labels) + 2
-        ws.cell(row=amort_start, column=11, value="Amortization").font = bold_font
-        
-        amort_labels = [
-            "Term Loan",
-            "Seller Note",
-            "Amortization Subtotal"
-        ]
-        
-        for i, label in enumerate(amort_labels):
-            ws.cell(row=amort_start + 1 + i, column=11, value=label)
-            
-        # Summary Metrics
-        summary_start = amort_start + len(amort_labels) + 2
-        ws.cell(row=summary_start, column=11, value="Total Debt Service").font = bold_font
-        ws.cell(row=summary_start+2, column=11, value="FCF After Debt Service").font = bold_font
-        ws.cell(row=summary_start+3, column=11, value="Management Fees")
-        ws.cell(row=summary_start+4, column=11, value="Earnout")
-        
-        revolver_start = summary_start + 6
-        ws.cell(row=revolver_start, column=11, value="Cash Available for Revolver").font = bold_font
-        ws.cell(row=revolver_start+1, column=11, value="Revolver Drawdown (Repayment)")
-        ws.cell(row=revolver_start+2, column=11, value="Revolver Balance")
-        ws.cell(row=revolver_start+3, column=11, value="Remaining Cash")
-        
-        fccr_start = revolver_start + 5
-        ws.cell(row=fccr_start, column=11, value="FCCR - Mgmt fee is a fixed charge")
-        ws.cell(row=fccr_start+1, column=11, value="FCCR - Mgmt fee is NOT a fixed charge")
-        
-        # Column Width Adjustments
-        ws.column_dimensions['A'].width = 25
-        ws.column_dimensions['K'].width = 25
-        for col in ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']:
-             ws.column_dimensions[col].width = 12
-
-        filename = f"report_{deal_id}_{int(time.time())}.xlsx"
-        filepath = os.path.join(REPORTS_DIR, filename)
-        wb.save(filepath)
-        
-        return jsonify({"success": True, "filename": filename})
     except Exception as e:
-        print(f"Error generating report: {e}")
+        print(f"Report generation failed: {e}")
         traceback.print_exc()
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route('/api/reports', methods=['GET'])
-def list_reports():
-    reports = []
-    if os.path.exists(REPORTS_DIR):
+@app.route('/api/reports/history/<deal_id>', methods=['GET'])
+def get_report_history(deal_id):
+    try:
+        if not os.path.exists(REPORTS_DIR):
+            return jsonify({"success": True, "reports": []})
+            
+        reports = []
         for f in os.listdir(REPORTS_DIR):
-            if f.endswith('.xlsx'):
-                reports.append({"filename": f, "created_at": os.path.getctime(os.path.join(REPORTS_DIR, f))})
-    return jsonify({"success": True, "reports": sorted(reports, key=lambda x: x['created_at'], reverse=True)})
+            if deal_id in f and f.endswith('.csv'):
+                filepath = os.path.join(REPORTS_DIR, f)
+                created_at = os.path.getctime(filepath)
+                reports.append({
+                    "filename": f,
+                    "date": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(created_at)),
+                    "timestamp": created_at
+                })
+                
+        # Sort by newest first
+        reports.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        return jsonify({"success": True, "history": reports})
+        
+    except Exception as e:
+        print(f"History fetch failed: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/reports/download/<filename>', methods=['GET'])
 def download_report(filename):
-    return send_from_directory(REPORTS_DIR, filename, as_attachment=True)
+    try:
+        return send_from_directory(REPORTS_DIR, filename, as_attachment=True)
+    except Exception as e:
+        return jsonify({"success": False, "message": "File not found"}), 404
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))

@@ -20,7 +20,7 @@ from .config import (
     PRE_BID_DATA_DIR
 )
 from .schema import get_extraction_schema, validate_schema
-
+from .revenue_extraction import extract_financial_matrix
 
 # ============================================================================
 # MAIN EXTRACTION FUNCTION
@@ -165,6 +165,18 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
         # Log extracted summary
         _log_extraction_summary(extracted_data)
         
+        # ---------------------------------------------------------------------
+        # STEP 5.5: EXTRACT DETAILED FINANCIAL MATRIX
+        # ---------------------------------------------------------------------
+        try:
+            financial_matrix = extract_financial_matrix(ocr_text, deal_id)
+            extracted_data['financial_matrix'] = financial_matrix.get('financials', [])
+            extracted_data['cash_flow_matrix'] = financial_matrix.get('cash_flow', [])
+        except Exception as e:
+            print(f"⚠️ Financial matrix extraction failed (skipping): {e}")
+            extracted_data['financial_matrix'] = []
+            extracted_data['cash_flow_matrix'] = []
+            
     except json.JSONDecodeError as e:
         error_msg = f"Failed to parse JSON: {e}"
         print(f"❌ {error_msg}")
@@ -457,7 +469,7 @@ def load_extracted_data(deal_id: str) -> Optional[Dict[str, Any]]:
         # Find all files for this deal
         files = [
             f for f in os.listdir(EXTRACTED_DATA_DIR)
-            if f.startswith(f"{deal_id}_") and f.endswith('.json') and 'ERROR' not in f
+            if (f.startswith(f"{deal_id}_") or f == f"{deal_id}.json") and f.endswith('.json') and 'ERROR' not in f
         ]
         
         if not files:
@@ -526,6 +538,10 @@ You must return data matching this exact structure:
 
 4. **Market Intelligence (HIGH PRIORITY):**
    - **Industry Position:** Explicitly state the company's rank (e.g., "#1 in US", "Market Leader"). If not stated, infer from context (e.g., "leading provider" -> "Top Tier").
+   - **Market Size (TAM/SAM/SOM):** Extract the Total Addressable Market (TAM) or general market size if available. 
+     - **Strategy:** Look for "Global Market Size", "Industry Value", "CAGR", "TAM".
+     - **Inference:** If company specific TAM is missing, use the general industry size mentioned in the market overview section.
+     - **Format:** Return as a string value (e.g., "$50B Global Market", "Growing to $12B by 2025").
    - **Market Share:** Extract percentage (e.g., "15% share"). If exact number is missing but descriptive text exists (e.g., "dominant share", "majority of market"), use that phrase.
    - **Competitors:** Extract ALL named competitors. If none are named, look for "competition" sections and summarize descriptions.
    - **Market Trends:** Extract key growth drivers and headwinds.

@@ -5,4 +5,3 @@ google-cloud-documentai
 pypdf
 openai
 python-dotenv
-openpyxl

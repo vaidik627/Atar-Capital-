@@ -14,6 +14,7 @@ backend/extracted_data/
 backend/parsed_text/
 backend/reports/
 backend/pre_bid_analysis_json/
+backend/revenue_data_json/
 
 # Secrets
 backend/credentials.json

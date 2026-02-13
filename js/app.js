@@ -115,7 +115,6 @@ document.addEventListener('DOMContentLoaded', () => {
             'upload': 'Upload Document',
             'active-deals': 'Active Deals',
             'analysis': 'Deal Analysis',
-            'reports': 'Reports',
             'settings': 'Settings'
         };
         pageTitle.textContent = titles[viewName] || 'Dashboard';
@@ -231,23 +230,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 `;
                 break;
-            case 'reports':
-                html = `
-                    <div class="card">
-                         <div class="section-header">
-                            <h3>Generated Reports</h3>
-                            <button id="refresh-reports" class="btn-secondary" style="font-size: 0.875rem; padding: 0.25rem 0.75rem;">
-                                <i class="fas fa-sync-alt"></i> Refresh
-                            </button>
-                        </div>
-                        <div id="reports-list-container" style="padding: 1rem 0;">
-                            <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
-                                <i class="fas fa-spinner fa-spin"></i> Loading reports...
-                            </div>
-                        </div>
-                    </div>
-                `;
-                break;
             case 'settings':
                 html = `
                     <div class="card" style="max-width: 600px;">
@@ -281,6 +263,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (val.toString().includes(symbol)) return val;
                 return `${symbol}${val}`;
             };
+
+            const appendMillions = (val) => {
+                 if (!val || val.toString().toLowerCase().includes('million')) return val;
+                 return `${val} Million`;
+            };
             
             if (isRevenue && data) {
                 // Handle single revenue object
@@ -289,7 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const per = data.period || '';
                 content = `
                     <div style="text-align: right;">
-                        <div style="font-weight: 600;">${val} ${unit}</div>
+                        <div style="font-weight: 600;">${appendMillions(val)} ${unit}</div>
                         ${per ? `<div style="font-size: 0.75rem; color: #94a3b8;">${per}</div>` : ''}
                     </div>
                 `;
@@ -341,6 +328,194 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
 
+
+        function renderCashFlowTable(cashFlowData) {
+            if (!cashFlowData || cashFlowData.length === 0) return '';
+
+            // Helper to format currency values (full thousands)
+            const formatCurrency = (val) => {
+                if (!val || val === '-' || val === 'N/A' || val === '0' || val === '0.0') return '-';
+                
+                // Remove existing formatting
+                let cleanVal = val.toString().replace(/[$,\s]/g, '');
+                let isNegative = false;
+                
+                // Handle negatives
+                if (cleanVal.includes('(') && cleanVal.includes(')')) {
+                    isNegative = true;
+                    cleanVal = cleanVal.replace(/[()]/g, '');
+                } else if (cleanVal.startsWith('-')) {
+                    isNegative = true;
+                    cleanVal = cleanVal.substring(1);
+                }
+                
+                let num = parseFloat(cleanVal);
+                if (isNaN(num)) return val;
+                
+                // Format with commas and no decimals (e.g. 30,000)
+                // The user specifically requested "30000$" format style in recent prompt
+                // But standard financial is $30,000. Let's stick to standard clean formatting.
+                // Divide by 1000 to show in thousands if the value is large (e.g. 30,000,000 -> 30,000)
+                // Assuming backend sends FULL numbers now.
+                
+                // Heuristic: If value > 1,000,000, divide by 1,000 to show in thousands ($000s)
+                // If value is between 1,000 and 1,000,000, it's likely already in thousands or just small.
+                // Let's assume standard "($000s)" display convention.
+                
+                let displayNum = num / 1000; 
+                
+                // Format with commas, 0 decimals
+                let formatted = displayNum.toLocaleString('en-US', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0
+                });
+
+                if (isNegative) return `(${formatted})`;
+                return formatted;
+            };
+
+            const actualYears = ['2019A', '2020A', '2021A', '2022A'];
+            const atarYears = ['2023R', '2024R', '2025R', '2026R', '2027R'];
+            const mgmtYears = ['2023M', '2024M', '2025M', '2026M', '2027M'];
+            const allYears = [...actualYears, ...atarYears, ...mgmtYears];
+
+            let html = `
+                <div class="card" style="margin-top: 1.5rem; overflow-x: auto;">
+                    <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+                        <i class="fas fa-money-bill-wave" style="color: var(--success-color); margin-right: 0.5rem;"></i> Tale of The Tape (Cash Flow) <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 400;">($ in Thousands)</span>
+                    </h3>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 1200px;">
+                        <thead>
+                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
+                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Metric</th>
+                                <th colspan="${actualYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #334155; font-weight: 600;">Actuals</th>
+                                <th colspan="${atarYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #059669; font-weight: 600;">Atar Projections</th>
+                                <th colspan="${mgmtYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #7c3aed; font-weight: 600;">Management Projections</th>
+                            </tr>
+                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
+                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Period</th>
+                                ${allYears.map(y => `<th style="padding: 0.5rem; border: 1px solid #e2e8f0;">${y}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            cashFlowData.forEach(row => {
+                html += `
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding: 0.75rem; font-weight: 600; border: 1px solid #e2e8f0; position: sticky; left: 0; background: white; z-index: 5;">${row.metric}</td>
+                        ${allYears.map(year => {
+                            const val = row.values[year] || '-';
+                            const displayVal = formatCurrency(val);
+                            return `<td style="padding: 0.5rem; text-align: right; border: 1px solid #e2e8f0; font-family: 'Roboto Mono', monospace;">${displayVal}</td>`;
+                        }).join('')}
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            return html;
+        }
+
+        function renderFinancialMatrix(matrixData) {
+            if (!matrixData || matrixData.length === 0) return '';
+
+            const formatMillions = (val) => {
+                if (!val || val === '-' || val === 'N/A') return '-';
+                
+                // Remove currency symbols, commas, and whitespace
+                let cleanVal = val.toString().replace(/[$,\s]/g, '');
+                let isNegative = false;
+                
+                // Check for parentheses (financial negative) or minus sign
+                if (cleanVal.includes('(') && cleanVal.includes(')')) {
+                    isNegative = true;
+                    cleanVal = cleanVal.replace(/[()]/g, '');
+                } else if (cleanVal.startsWith('-')) {
+                    isNegative = true;
+                    cleanVal = cleanVal.substring(1);
+                }
+                
+                let num = parseFloat(cleanVal);
+                if (isNaN(num)) return val; // Return original if parsing fails
+                
+                // Convert to millions
+                num = num / 1000000;
+                
+                // Format to 1 decimal place
+                let formatted = num.toFixed(1);
+                
+                // Re-apply negative sign/parens
+                if (isNegative) {
+                    return `(${formatted})`;
+                }
+                return formatted;
+            };
+
+            const actualYears = ['2019A', '2020A', '2021A', '2022A'];
+            const atarYears = ['2023R', '2024R', '2025R', '2026R', '2027R'];
+            const mgmtYears = ['2023M', '2024M', '2025M', '2026M', '2027M'];
+            const allYears = [...actualYears, ...atarYears, ...mgmtYears];
+
+            let html = `
+                <div class="card" style="margin-top: 1.5rem; overflow-x: auto;">
+                    <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+                        <i class="fas fa-table" style="color: var(--primary-color); margin-right: 0.5rem;"></i> Financial Matrix <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 400;">($ in Millions)</span>
+                    </h3>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 1200px;">
+                        <thead>
+                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
+                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Metric</th>
+                                <th colspan="${actualYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #334155; font-weight: 600;">Actuals</th>
+                                <th colspan="${atarYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #059669; font-weight: 600;">Atar Projections</th>
+                                <th colspan="${mgmtYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #7c3aed; font-weight: 600;">Management Projections</th>
+                            </tr>
+                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
+                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Period</th>
+                                ${allYears.map(y => `<th style="padding: 0.5rem; border: 1px solid #e2e8f0;">${y}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            matrixData.forEach(row => {
+                // Main Metric Row
+                html += `
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding: 0.75rem; font-weight: 600; border: 1px solid #e2e8f0; position: sticky; left: 0; background: white; z-index: 5;">${row.metric}</td>
+                        ${allYears.map(year => {
+                            const val = row.values[year] || '-';
+                            const displayVal = formatMillions(val);
+                            return `<td style="padding: 0.5rem; text-align: right; border: 1px solid #e2e8f0;">${displayVal}</td>`;
+                        }).join('')}
+                    </tr>
+                `;
+                
+                // Sub-metric Row (if exists)
+                if (row.sub_metric) {
+                    html += `
+                        <tr style="border-bottom: 1px solid #e2e8f0; background: #fdfdfd;">
+                            <td style="padding: 0.5rem 0.75rem; color: var(--text-secondary); font-style: italic; border: 1px solid #e2e8f0; padding-left: 1.5rem; position: sticky; left: 0; background: #fdfdfd; z-index: 5;">${row.sub_metric}</td>
+                            ${allYears.map(year => {
+                                const val = row.sub_values ? (row.sub_values[year] || '-') : '-';
+                                return `<td style="padding: 0.5rem; text-align: right; color: var(--text-secondary); border: 1px solid #e2e8f0; font-size: 0.8rem;">${val}</td>`;
+                            }).join('')}
+                        </tr>
+                    `;
+                }
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            return html;
+        }
 
         function renderAnalysisDashboard(data) {
             const container = document.getElementById('analysis-content');
@@ -423,7 +598,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem;">
                                 <div>
                                     <div style="font-size: 0.875rem; color: var(--text-secondary);">Present Revenue</div>
-                                    <div style="font-size: 1.25rem; font-weight: 600;">${currencySymbol}${fmt(data.revenue.present.value).toString().replace(currencySymbol, '')} (${fmt(data.revenue.present.period)})</div>
+                                    <div style="font-size: 1.25rem; font-weight: 600;">${currencySymbol}${fmt(data.revenue.present.value).toString().replace(currencySymbol, '')} Million (${fmt(data.revenue.present.period)})</div>
                                 </div>
                             </div>
 
@@ -572,58 +747,120 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
 
                     </div>
-                </div>
-                
-                <div style="margin-top: 2rem; text-align: center; padding-bottom: 2rem;">
-                    <button id="generate-report-btn" class="btn-primary" style="padding: 0.75rem 2rem; display: inline-flex; align-items: center; gap: 0.5rem;">
-                        <i class="fas fa-file-excel"></i> Generate Excel Report
-                    </button>
-                    <p id="report-status" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary); display: none;"></p>
+
+                    ${renderFinancialMatrix(data.financialMatrix)}
+                    ${renderCashFlowTable(data.cashFlowMatrix)}
+                    
+                    <!-- Report Generation Section -->
+                    <div class="card" id="report-section">
+                        <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+                            <i class="fas fa-file-export" style="color: var(--secondary-color); margin-right: 0.5rem;"></i> Export & Reports
+                        </h3>
+                        
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                            <div>
+                                <h4 style="margin-bottom: 0.5rem;">Generate Excel Report</h4>
+                                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                                    Download a detailed Excel report containing all financial metrics, cash flow projections, and analysis data.
+                                </p>
+                            </div>
+                            <button id="generate-report-btn" class="btn-primary" style="width: auto; padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                                <i class="fas fa-file-excel"></i> Generate CSV Report
+                            </button>
+                        </div>
+
+                        <!-- Report History -->
+                        <h4 style="margin-bottom: 1rem; font-size: 0.95rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Download History</h4>
+                        <div id="deal-report-history">
+                            <div style="text-align: center; color: #94a3b8; padding: 1rem;">Loading history...</div>
+                        </div>
+                    </div>
                 </div>
             `;
             
             container.innerHTML = html;
 
-            // Attach listener for report generation
-            const reportBtn = document.getElementById('generate-report-btn');
-            if (reportBtn) {
-                reportBtn.addEventListener('click', async () => {
-                    const statusEl = document.getElementById('report-status');
-                    try {
-                        reportBtn.disabled = true;
-                        reportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
-                        statusEl.style.display = 'block';
-                        statusEl.textContent = 'Generating report...';
-                        statusEl.style.color = 'var(--text-secondary)';
+            // Attach event listener for Generate Report
+            const generateBtn = document.getElementById('generate-report-btn');
+            if (generateBtn) {
+                generateBtn.addEventListener('click', () => handleGenerateReport(state.currentDealId));
+            }
 
-                        const response = await fetch(`${API_URL}/reports/generate`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ dealId: state.currentDealId })
-                        });
-                        
-                        const result = await response.json();
-                        
-                        if (result.success) {
-                            statusEl.textContent = 'Report generated successfully! Check the Reports section.';
-                            statusEl.style.color = 'var(--success-color)';
-                            reportBtn.innerHTML = '<i class="fas fa-check"></i> Generated';
-                            
-                            // Redirect to reports view after a delay
-                            setTimeout(() => {
-                                updateState({ currentView: 'reports' });
-                            }, 1500);
-                        } else {
-                            throw new Error(result.message || 'Failed to generate report');
-                        }
-                    } catch (error) {
-                        console.error('Report generation error:', error);
-                        statusEl.textContent = `Error: ${error.message}`;
-                        statusEl.style.color = 'var(--danger-color)';
-                        reportBtn.disabled = false;
-                        reportBtn.innerHTML = '<i class="fas fa-file-excel"></i> Generate Excel Report';
-                    }
+            // Load history
+            loadDealReportHistory(state.currentDealId);
+        }
+
+        async function handleGenerateReport(dealId) {
+            const btn = document.getElementById('generate-report-btn');
+            const originalContent = btn.innerHTML;
+            
+            // Loading State
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating Excel...';
+            
+            try {
+                const response = await fetch(`${API_URL}/reports/generate/${dealId}`, {
+                    method: 'POST'
                 });
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Trigger Download
+                    window.location.href = `${API_URL}/reports/download/${result.filename}`;
+                    
+                    // Update History
+                    await loadDealReportHistory(dealId);
+                    
+                } else {
+                    alert('Failed to generate report: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Report generation error:', error);
+                alert('An error occurred while generating the report.');
+            } finally {
+                // Reset Button
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        }
+
+        async function loadDealReportHistory(dealId) {
+            const container = document.getElementById('deal-report-history');
+            if (!container) return;
+            
+            try {
+                const response = await fetch(`${API_URL}/reports/history/${dealId}`);
+                const result = await response.json();
+                
+                if (result.success && result.history && result.history.length > 0) {
+                    container.innerHTML = `
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            ${result.history.map(report => `
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                        <div style="color: #16a34a; font-size: 1.2rem;"><i class="fas fa-file-csv"></i></div>
+                                        <div>
+                                            <div style="font-weight: 500; font-size: 0.9rem;">${report.filename}</div>
+                                            <div style="font-size: 0.75rem; color: #64748b;">${new Date(report.timestamp * 1000).toLocaleString()}</div>
+                                        </div>
+                                    </div>
+                                    <a href="${API_URL}/reports/download/${report.filename}" class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; text-decoration: none; color: var(--text-primary);">
+                                        <i class="fas fa-download"></i> Download
+                                    </a>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 1.5rem; border: 2px dashed #e2e8f0; border-radius: 6px; color: #94a3b8;">
+                            <p>No reports generated yet.</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading history:', error);
+                container.innerHTML = '<p style="color: #ef4444; font-size: 0.9rem;">Failed to load history.</p>';
             }
         }
 

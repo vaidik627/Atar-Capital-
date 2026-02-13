@@ -36,6 +36,7 @@ def get_extraction_schema():
             "ebitda_margin_percent": [],
             "net_margin_percent": []
         },
+        "financial_matrix": [],
         "market_intelligence": {
             "market_size": None,
             "market_growth_percent": None,
@@ -79,7 +80,7 @@ def validate_schema(data):
     
     # Check top-level required fields
     required_fields = ['company_name', 'currency', 'company_summary', 'revenue', 
-                      'profit_metrics', 'market_intelligence', 'risk_analysis', 'ai_suggestion']
+                      'profit_metrics', 'market_intelligence', 'risk_analysis', 'ai_suggestion', 'financial_matrix']
     
     for field in required_fields:
         if field not in data:
@@ -97,6 +98,10 @@ def validate_schema(data):
     if 'profit_metrics' in data:
         if not isinstance(data['profit_metrics'], dict):
             errors.append("Profit metrics must be a dictionary")
+
+    if 'financial_matrix' in data:
+        if not isinstance(data['financial_matrix'], list):
+            errors.append("Financial matrix must be a list")
     
     if 'market_intelligence' in data:
         if not isinstance(data['market_intelligence'], dict):
