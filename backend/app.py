@@ -5,8 +5,8 @@ import time
 import traceback
 import json
 from .ocr_service import extract_text_from_file
-from .extraction import extract_financial_data, load_extracted_data, extract_pre_bid_analysis
-from .report_generator import generate_csv_report
+from .extraction import extract_financial_data, load_extracted_data, normalize_extracted_data
+from .report_generator import generate_csv_report, generate_excel_report
 
 app = Flask(__name__, static_folder='../')
 CORS(app)
@@ -43,9 +43,9 @@ def load_existing_deals():
             try:
                 deal_id = filename.replace('.json', '')
                 filepath = os.path.join(EXTRACTED_DATA_DIR, filename)
-                
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    extracted_data = json.load(f)
+                extracted_data = load_extracted_data(deal_id)
+                if not extracted_data:
+                    continue
                 
                 # Reconstruct deal info
                 company_name = extracted_data.get('company_name') or f"Deal {deal_id}"
@@ -130,6 +130,8 @@ def get_analysis(deal_id):
             "message": "Analysis not found",
             "data": {}
         })
+
+    extracted_data = normalize_extracted_data(extracted_data)
     
     # Format for frontend
     # Map the backend schema to the frontend expected structure
@@ -189,8 +191,8 @@ def get_analysis(deal_id):
             "rationale": extracted_data.get('ai_suggestion', {}).get('rationale'),
             "visible": True
         },
-        "financialMatrix": extracted_data.get('financial_matrix', []),
-        "cashFlowMatrix": extracted_data.get('cash_flow_matrix', [])
+        "tale_of_the_tape": extracted_data.get('tale_of_the_tape', {}),
+        "free_cash_flow": extracted_data.get('free_cash_flow', {})
     }
 
     return jsonify({
@@ -315,6 +317,27 @@ def generate_report(deal_id):
         traceback.print_exc()
         return jsonify({"success": False, "message": str(e)}), 500
 
+
+@app.route('/api/reports/generate-excel/<deal_id>', methods=['POST'])
+def generate_excel(deal_id):
+    try:
+        extracted_data = load_extracted_data(deal_id)
+        if not extracted_data:
+            return jsonify({"success": False, "message": "Deal data not found"}), 404
+
+        deal_name = DEALS.get(deal_id, {}).get('name', f'Deal_{deal_id}')
+        filename = generate_excel_report(deal_id, deal_name, extracted_data)
+
+        return jsonify({
+            "success": True,
+            "filename": filename,
+            "message": "Excel report generated successfully"
+        })
+    except Exception as e:
+        print(f"Excel report generation failed: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": str(e)}), 500
+
 @app.route('/api/reports/history/<deal_id>', methods=['GET'])
 def get_report_history(deal_id):
     try:
@@ -323,7 +346,7 @@ def get_report_history(deal_id):
             
         reports = []
         for f in os.listdir(REPORTS_DIR):
-            if deal_id in f and f.endswith('.csv'):
+            if deal_id in f and f.lower().endswith(('.csv', '.xlsm', '.xlsx')):
                 filepath = os.path.join(REPORTS_DIR, f)
                 created_at = os.path.getctime(filepath)
                 reports.append({

@@ -33,9 +33,14 @@ def process_document_chunk(client, processor_name, file_content, mime_type):
 
 def extract_text_from_file(file_content, mime_type='application/pdf'):
     """
-    Extract text from a file (PDF or Image) using Google Document AI.
-    Handles PDF chunking if necessary.
+    Extract text from a file (PDF or Image).
+    Tries Google Document AI first, falls back to PyPDF if credentials missing.
     """
+    # Check for credentials
+    if not os.path.exists(CREDENTIALS_PATH):
+        print("⚠️ Google Cloud Credentials not found. Falling back to simple PDF extraction.")
+        return extract_text_fallback(file_content, mime_type)
+
     try:
         # Initialize Document AI client
         client_options = ClientOptions(api_endpoint=f"{LOCATION}-documentai.googleapis.com")
@@ -72,4 +77,22 @@ def extract_text_from_file(file_content, mime_type='application/pdf'):
 
     except Exception as e:
         print(f"Error in OCR processing: {e}")
-        raise e
+        print("Attempting fallback extraction...")
+        return extract_text_fallback(file_content, mime_type)
+
+def extract_text_fallback(file_content, mime_type):
+    """Fallback text extraction using pypdf"""
+    try:
+        if mime_type == 'application/pdf':
+            pdf_reader = pypdf.PdfReader(io.BytesIO(file_content))
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            
+            if not text.strip():
+                return "Error: Could not extract text from PDF. It might be a scanned image without OCR."
+            return text
+        else:
+            return "Error: Unsupported file type for fallback extraction."
+    except Exception as e:
+        return f"Error in fallback extraction: {str(e)}"

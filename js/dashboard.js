@@ -329,193 +329,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-        function renderCashFlowTable(cashFlowData) {
-            if (!cashFlowData || cashFlowData.length === 0) return '';
+        /* Cash Flow Table Rendering Removed */
 
-            // Helper to format currency values (full thousands)
-            const formatCurrency = (val) => {
-                if (!val || val === '-' || val === 'N/A' || val === '0' || val === '0.0') return '-';
-                
-                // Remove existing formatting
-                let cleanVal = val.toString().replace(/[$,\s]/g, '');
-                let isNegative = false;
-                
-                // Handle negatives
-                if (cleanVal.includes('(') && cleanVal.includes(')')) {
-                    isNegative = true;
-                    cleanVal = cleanVal.replace(/[()]/g, '');
-                } else if (cleanVal.startsWith('-')) {
-                    isNegative = true;
-                    cleanVal = cleanVal.substring(1);
-                }
-                
-                let num = parseFloat(cleanVal);
-                if (isNaN(num)) return val;
-                
-                // Format with commas and no decimals (e.g. 30,000)
-                // The user specifically requested "30000$" format style in recent prompt
-                // But standard financial is $30,000. Let's stick to standard clean formatting.
-                // Divide by 1000 to show in thousands if the value is large (e.g. 30,000,000 -> 30,000)
-                // Assuming backend sends FULL numbers now.
-                
-                // Heuristic: If value > 1,000,000, divide by 1,000 to show in thousands ($000s)
-                // If value is between 1,000 and 1,000,000, it's likely already in thousands or just small.
-                // Let's assume standard "($000s)" display convention.
-                
-                let displayNum = num / 1000; 
-                
-                // Format with commas, 0 decimals
-                let formatted = displayNum.toLocaleString('en-US', {
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 0
-                });
-
-                if (isNegative) return `(${formatted})`;
-                return formatted;
-            };
-
-            const actualYears = ['2019A', '2020A', '2021A', '2022A'];
-            const atarYears = ['2023R', '2024R', '2025R', '2026R', '2027R'];
-            const mgmtYears = ['2023M', '2024M', '2025M', '2026M', '2027M'];
-            const allYears = [...actualYears, ...atarYears, ...mgmtYears];
-
-            let html = `
-                <div class="card" style="margin-top: 1.5rem; overflow-x: auto;">
-                    <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
-                        <i class="fas fa-money-bill-wave" style="color: var(--success-color); margin-right: 0.5rem;"></i> Tale of The Tape (Cash Flow) <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 400;">($ in Thousands)</span>
-                    </h3>
-                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 1200px;">
-                        <thead>
-                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
-                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Metric</th>
-                                <th colspan="${actualYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #334155; font-weight: 600;">Actuals</th>
-                                <th colspan="${atarYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #059669; font-weight: 600;">Atar Projections</th>
-                                <th colspan="${mgmtYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #7c3aed; font-weight: 600;">Management Projections</th>
-                            </tr>
-                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
-                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Period</th>
-                                ${allYears.map(y => `<th style="padding: 0.5rem; border: 1px solid #e2e8f0;">${y}</th>`).join('')}
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
-
-            cashFlowData.forEach(row => {
-                html += `
-                    <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 0.75rem; font-weight: 600; border: 1px solid #e2e8f0; position: sticky; left: 0; background: white; z-index: 5;">${row.metric}</td>
-                        ${allYears.map(year => {
-                            const val = row.values[year] || '-';
-                            const displayVal = formatCurrency(val);
-                            return `<td style="padding: 0.5rem; text-align: right; border: 1px solid #e2e8f0; font-family: 'Roboto Mono', monospace;">${displayVal}</td>`;
-                        }).join('')}
-                    </tr>
-                `;
-            });
-
-            html += `
-                        </tbody>
-                    </table>
-                </div>
-            `;
-            return html;
-        }
-
-        function renderFinancialMatrix(matrixData) {
-            if (!matrixData || matrixData.length === 0) return '';
-
-            const formatMillions = (val) => {
-                if (!val || val === '-' || val === 'N/A') return '-';
-                
-                // Remove currency symbols, commas, and whitespace
-                let cleanVal = val.toString().replace(/[$,\s]/g, '');
-                let isNegative = false;
-                
-                // Check for parentheses (financial negative) or minus sign
-                if (cleanVal.includes('(') && cleanVal.includes(')')) {
-                    isNegative = true;
-                    cleanVal = cleanVal.replace(/[()]/g, '');
-                } else if (cleanVal.startsWith('-')) {
-                    isNegative = true;
-                    cleanVal = cleanVal.substring(1);
-                }
-                
-                let num = parseFloat(cleanVal);
-                if (isNaN(num)) return val; // Return original if parsing fails
-                
-                // Convert to millions
-                num = num / 1000000;
-                
-                // Format to 1 decimal place
-                let formatted = num.toFixed(1);
-                
-                // Re-apply negative sign/parens
-                if (isNegative) {
-                    return `(${formatted})`;
-                }
-                return formatted;
-            };
-
-            const actualYears = ['2019A', '2020A', '2021A', '2022A'];
-            const atarYears = ['2023R', '2024R', '2025R', '2026R', '2027R'];
-            const mgmtYears = ['2023M', '2024M', '2025M', '2026M', '2027M'];
-            const allYears = [...actualYears, ...atarYears, ...mgmtYears];
-
-            let html = `
-                <div class="card" style="margin-top: 1.5rem; overflow-x: auto;">
-                    <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
-                        <i class="fas fa-table" style="color: var(--primary-color); margin-right: 0.5rem;"></i> Financial Matrix <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 400;">($ in Millions)</span>
-                    </h3>
-                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 1200px;">
-                        <thead>
-                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
-                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Metric</th>
-                                <th colspan="${actualYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #334155; font-weight: 600;">Actuals</th>
-                                <th colspan="${atarYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #059669; font-weight: 600;">Atar Projections</th>
-                                <th colspan="${mgmtYears.length}" style="text-align: center; border: 1px solid #e2e8f0; color: #7c3aed; font-weight: 600;">Management Projections</th>
-                            </tr>
-                            <tr style="background: #f8fafc; text-align: right; color: var(--text-secondary);">
-                                <th style="text-align: left; padding: 0.75rem; border: 1px solid #e2e8f0; position: sticky; left: 0; background: #f8fafc; z-index: 10;">Period</th>
-                                ${allYears.map(y => `<th style="padding: 0.5rem; border: 1px solid #e2e8f0;">${y}</th>`).join('')}
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
-
-            matrixData.forEach(row => {
-                // Main Metric Row
-                html += `
-                    <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 0.75rem; font-weight: 600; border: 1px solid #e2e8f0; position: sticky; left: 0; background: white; z-index: 5;">${row.metric}</td>
-                        ${allYears.map(year => {
-                            const val = row.values[year] || '-';
-                            const displayVal = formatMillions(val);
-                            return `<td style="padding: 0.5rem; text-align: right; border: 1px solid #e2e8f0;">${displayVal}</td>`;
-                        }).join('')}
-                    </tr>
-                `;
-                
-                // Sub-metric Row (if exists)
-                if (row.sub_metric) {
-                    html += `
-                        <tr style="border-bottom: 1px solid #e2e8f0; background: #fdfdfd;">
-                            <td style="padding: 0.5rem 0.75rem; color: var(--text-secondary); font-style: italic; border: 1px solid #e2e8f0; padding-left: 1.5rem; position: sticky; left: 0; background: #fdfdfd; z-index: 5;">${row.sub_metric}</td>
-                            ${allYears.map(year => {
-                                const val = row.sub_values ? (row.sub_values[year] || '-') : '-';
-                                return `<td style="padding: 0.5rem; text-align: right; color: var(--text-secondary); border: 1px solid #e2e8f0; font-size: 0.8rem;">${val}</td>`;
-                            }).join('')}
-                        </tr>
-                    `;
-                }
-            });
-
-            html += `
-                        </tbody>
-                    </table>
-                </div>
-            `;
-            return html;
-        }
+        /* Financial Matrix Rendering Removed */
 
         function renderAnalysisDashboard(data) {
             const container = document.getElementById('analysis-content');
@@ -650,7 +466,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                         ${renderProfitRow(`Revenue (${currencySymbol})`, data.revenue?.present, true, currencySymbol)}
                                         ${renderProfitRow(`Gross Profit (${currencySymbol})`, data.profitMetrics?.gross_profit, false, currencySymbol)}
                                         ${renderProfitRow(`EBITDA (${currencySymbol})`, data.profitMetrics?.ebitda, false, currencySymbol)}
-                                        ${renderProfitRow(`Adj. EBITDA (${currencySymbol})`, data.profitMetrics?.adjusted_ebitda, false, currencySymbol)}
                                         ${renderProfitRow(`Op. Income (${currencySymbol})`, data.profitMetrics?.operating_income, false, currencySymbol)}
                                         ${renderProfitRow(`Net Income (${currencySymbol})`, data.profitMetrics?.net_income, false, currencySymbol)}
                                         ${renderProfitRow(`Op. Cash Flow (${currencySymbol})`, data.profitMetrics?.operating_cash_flow, false, currencySymbol)}
@@ -675,6 +490,176 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     <!-- Risks & Market -->
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
+
+                        <!-- Tale of the Tape -->
+                        <div class="card">
+                            <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+                                <i class="fas fa-tape" style="color: var(--primary-color); margin-right: 0.5rem;"></i> Tale of the Tape
+                            </h3>
+                            
+                            <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; border-left: 4px solid var(--primary-color);">
+                                <!-- Adjusted EBITDA -->
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem;">
+                                    Adjusted EBITDA (${currencySymbol}M)
+                                </div>
+                                
+                                <div style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
+                                    ${(() => {
+                                        const adjEbitda = data.profitMetrics?.adjusted_ebitda || [];
+                                        
+                                        if (Array.isArray(adjEbitda) && adjEbitda.length > 0) {
+                                            const rows = adjEbitda.map(item => `
+                                                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
+                                                    <span style="font-weight: 500; color: var(--text-secondary);">${item.period || 'N/A'}</span>
+                                                    <div style="text-align: right;">
+                                                        <span style="font-weight: 700; color: var(--text-primary); display: block;">${item.value}</span>
+                                                    </div>
+                                                </div>
+                                            `).join('');
+                                            
+                                            return `
+                                                <div style="display: flex; flex-direction: column;">
+                                                    ${rows}
+                                                </div>
+                                            `;
+                                        } else {
+                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                                        }
+                                    })()}
+                                </div>
+
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem;">
+                                    CAPEX ($M)
+                                </div>
+                                
+                                <div style="margin-top: 0.5rem;">
+                                    ${(() => {
+                                        const capex = data.tale_of_the_tape?.capex || {};
+                                        const yearWise = capex.year_wise || {};
+                                        
+                                        // If we have year-wise data
+                                        if (yearWise && Object.keys(yearWise).length > 0) {
+                                            const rows = Object.entries(yearWise).map(([year, val]) => {
+                                                // Handle both string values and object values {value, source}
+                                                const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
+                                                let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (capex.source || 'not_found');
+                                                
+                                                if (sourceVal === 'derived_from_fcf') sourceVal = 'derived from FCF';
+                                                if (sourceVal === 'calculated') sourceVal = 'calculated';
+                                                
+                                                return `
+                                                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
+                                                    <span style="font-weight: 500; color: var(--text-secondary);">${year}</span>
+                                                    <div style="text-align: right;">
+                                                        <span style="font-weight: 700; color: var(--text-primary); display: block;">${displayVal}</span>
+                                                        <span style="font-size: 0.65rem; color: #94a3b8;">(${sourceVal})</span>
+                                                    </div>
+                                                </div>
+                                            `}).join('');
+                                            
+                                            return `
+                                                <div style="display: flex; flex-direction: column;">
+                                                    ${rows}
+                                                </div>
+                                            `;
+                                        } 
+                                        // Fallback for backward compatibility or single value
+                                        else if (capex.value) {
+                                            return `
+                                                <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">
+                                                    ${fmt(capex.value)}
+                                                </div>
+                                            `;
+                                        }
+                                        else {
+                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                                        }
+                                    })()}
+                                </div>
+
+                                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.5rem; margin-bottom: 1.5rem;">
+                                    
+                                </div>
+
+                                <!-- Change in Working Capital -->
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem;">
+                                    Change in Working Capital ($M)
+                                </div>
+                                
+                                <div style="margin-top: 0.5rem;">
+                                    ${(() => {
+                                        const wc = data.tale_of_the_tape?.change_in_working_capital || {};
+                                        const yearWise = wc.year_wise || {};
+                                        
+                                        if (yearWise && Object.keys(yearWise).length > 0) {
+                                            const rows = Object.entries(yearWise).map(([year, val]) => {
+                                                const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
+                                                let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (wc.source || 'not_found');
+                                                if (sourceVal === 'calculated_from_nwc') sourceVal = 'calculated from NWC';
+                                                if (sourceVal === 'calculated_from_components') sourceVal = 'calculated from CA-CL';
+                                                
+                                                return `
+                                                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
+                                                    <span style="font-weight: 500; color: var(--text-secondary);">${year}</span>
+                                                    <div style="text-align: right;">
+                                                        <span style="font-weight: 700; color: var(--text-primary); display: block;">${displayVal}</span>
+                                                        <span style="font-size: 0.65rem; color: #94a3b8;">(${sourceVal})</span>
+                                                    </div>
+                                                </div>
+                                            `}).join('');
+                                            
+                                            return `
+                                                <div style="display: flex; flex-direction: column;">
+                                                    ${rows}
+                                                </div>
+                                            `;
+                                        } else {
+                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                                        }
+                                    })()}
+                                </div>
+
+                                <!-- 1x Cost -->
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem; margin-top: 1.5rem;">
+                                    1x Cost ($M)
+                                    <div style="font-size: 0.65rem; font-weight: 400; color: #64748b; margin-top: 2px;">
+                                        (+ Expense / - Gain)
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-top: 0.5rem;">
+                                    ${(() => {
+                                        const oneTime = data.tale_of_the_tape?.one_time_cost || {};
+                                        const yearWise = oneTime.year_wise || {};
+                                        
+                                        if (yearWise && Object.keys(yearWise).length > 0) {
+                                            const rows = Object.entries(yearWise).map(([year, val]) => {
+                                                const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
+                                                let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (oneTime.source || 'not_found');
+                                                if (sourceVal === 'calculated_from_bridge') sourceVal = 'calculated from bridge';
+                                                
+                                                return `
+                                                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
+                                                    <span style="font-weight: 500; color: var(--text-secondary);">${year}</span>
+                                                    <div style="text-align: right;">
+                                                        <span style="font-weight: 700; color: var(--text-primary); display: block;">${displayVal}</span>
+                                                        <span style="font-size: 0.65rem; color: #94a3b8;">(${sourceVal})</span>
+                                                    </div>
+                                                </div>
+                                            `}).join('');
+                                            
+                                            return `
+                                                <div style="display: flex; flex-direction: column;">
+                                                    ${rows}
+                                                </div>
+                                            `;
+                                        } else {
+                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                                        }
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
                         
                         <!-- Risk Analysis -->
                         <div class="card">
@@ -722,7 +707,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
 
                         <!-- Market Intelligence -->
-                        <div class="card">
+                    <div class="card">
                             <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
                                 <i class="fas fa-globe" style="color: var(--secondary-color); margin-right: 0.5rem;"></i> Market Intelligence
                             </h3>
@@ -748,9 +733,117 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     </div>
 
-                    ${renderFinancialMatrix(data.financialMatrix)}
-                    ${renderCashFlowTable(data.cashFlowMatrix)}
-                    
+                    <!-- Free Cash Flow Section -->
+                    <div class="card" style="margin-bottom: 1.5rem;">
+                        <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+                            <i class="fas fa-money-bill-wave" style="color: var(--success-color); margin-right: 0.5rem;"></i> Free Cash Flow Analysis
+                        </h3>
+                        
+                        <div style="overflow-x: auto;">
+                            ${(() => {
+                                const fcf = data.free_cash_flow || {};
+                                const historical = (fcf && typeof fcf === 'object') ? (fcf.historical || fcf.year_wise || {}) : {};
+                                const forecast = (fcf && typeof fcf === 'object') ? (fcf.forecast_next_5_years || {}) : {};
+                                
+                                const hasHistorical = historical && typeof historical === 'object' && Object.keys(historical).length > 0;
+                                const hasForecast = forecast && typeof forecast === 'object' && Object.keys(forecast).length > 0;
+
+                                const reservedForecastKeys = new Set(['base_year', 'growth_rate_used', 'methodology']);
+                                const forecastYears = hasForecast
+                                    ? Object.keys(forecast).filter(k => !reservedForecastKeys.has(k)).sort()
+                                    : [];
+
+                                if (!hasHistorical && !hasForecast) {
+                                    return `<div style="font-style: italic; color: #94a3b8; padding: 1rem; text-align: center;">Free Cash Flow data not available</div>`;
+                                }
+
+                                const historicalTable = hasHistorical ? (() => {
+                                    const sortedYears = Object.keys(historical).sort();
+                                    return `
+                                        <div style="margin-bottom: 1rem;">
+                                            <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem;">Historical</div>
+                                            <table style="width: 100%; border-collapse: collapse; min-width: 600px;">
+                                                <thead>
+                                                    <tr style="background: #f8fafc; text-align: left;">
+                                                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; color: var(--text-secondary); font-size: 0.85rem; width: 20%;">Metric</th>
+                                                        ${sortedYears.map(year => `
+                                                            <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; color: var(--text-primary); font-weight: 600; text-align: right;">${year}</th>
+                                                        `).join('')}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr>
+                                                        <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: var(--primary-color);">Free Cash Flow</td>
+                                                        ${sortedYears.map(year => {
+                                                            const item = historical[year];
+                                                            const val = typeof item === 'object' && item !== null ? (item.value || '-') : item;
+                                                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">${val}</td>`;
+                                                        }).join('')}
+                                                    </tr>
+                                                    <tr>
+                                                        <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; color: var(--text-secondary); font-size: 0.85rem;">Source</td>
+                                                        ${sortedYears.map(year => {
+                                                            const item = historical[year];
+                                                            const source = typeof item === 'object' && item !== null ? (item.source || '-') : 'not_found';
+                                                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-size: 0.8rem; color: #64748b;">${source}</td>`;
+                                                        }).join('')}
+                                                    </tr>
+                                                    <tr>
+                                                        <td style="padding: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">Method</td>
+                                                        ${sortedYears.map(year => {
+                                                            const item = historical[year];
+                                                            const method = typeof item === 'object' && item !== null ? (item.method || '-') : '-';
+                                                            return `<td style="padding: 0.75rem; text-align: right; font-size: 0.8rem; color: #94a3b8; font-style: italic;">${method}</td>`;
+                                                        }).join('')}
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    `;
+                                })() : '';
+
+                                const forecastTable = forecastYears.length > 0 ? (() => {
+                                    const baseYear = forecast.base_year || '';
+                                    const growthRate = forecast.growth_rate_used || '';
+                                    const methodology = forecast.methodology || '-';
+                                    return `
+                                        <div>
+                                            <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem;">Forecast (Next 5 Years)</div>
+                                            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">
+                                                <div>Base year: <span style="color: var(--text-primary); font-weight: 600;">${baseYear || '-'}</span></div>
+                                                <div>Growth rate: <span style="color: var(--text-primary); font-weight: 600;">${growthRate || '-'}</span></div>
+                                                <div>Methodology: <span style="color: var(--text-primary); font-weight: 600;">${methodology || '-'}</span></div>
+                                            </div>
+                                            <table style="width: 100%; border-collapse: collapse; min-width: 600px;">
+                                                <thead>
+                                                    <tr style="background: #f8fafc; text-align: left;">
+                                                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; color: var(--text-secondary); font-size: 0.85rem; width: 20%;">Metric</th>
+                                                        ${forecastYears.map(year => `
+                                                            <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; color: var(--text-primary); font-weight: 600; text-align: right;">${year}</th>
+                                                        `).join('')}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr>
+                                                        <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: var(--primary-color);">Projected FCF</td>
+                                                        ${forecastYears.map(year => {
+                                                            const val = forecast[year];
+                                                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">${val || '-'}</td>`;
+                                                        }).join('')}
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    `;
+                                })() : (hasForecast ? `
+                                    <div style="font-style: italic; color: #94a3b8; padding: 0.5rem 0; text-align: center;">Forecast data not available</div>
+                                ` : '');
+
+                                return `${historicalTable}${forecastTable}`;
+                            })()}
+                        </div>
+                    </div>
+
                     <!-- Report Generation Section -->
                     <div class="card" id="report-section">
                         <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
@@ -765,7 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 </p>
                             </div>
                             <button id="generate-report-btn" class="btn-primary" style="width: auto; padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
-                                <i class="fas fa-file-excel"></i> Generate CSV Report
+                                <i class="fas fa-file-excel"></i> Generate Excel Report
                             </button>
                         </div>
 
@@ -799,7 +892,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating Excel...';
             
             try {
-                const response = await fetch(`${API_URL}/reports/generate/${dealId}`, {
+                const response = await fetch(`${API_URL}/reports/generate-excel/${dealId}`, {
                     method: 'POST'
                 });
                 const result = await response.json();
@@ -838,7 +931,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${result.history.map(report => `
                                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
                                     <div style="display: flex; align-items: center; gap: 0.75rem;">
-                                        <div style="color: #16a34a; font-size: 1.2rem;"><i class="fas fa-file-csv"></i></div>
+                                        <div style="color: #16a34a; font-size: 1.2rem;">
+                                            <i class="fas ${report.filename.toLowerCase().endsWith('.csv') ? 'fa-file-csv' : 'fa-file-excel'}"></i>
+                                        </div>
                                         <div>
                                             <div style="font-weight: 500; font-size: 0.9rem;">${report.filename}</div>
                                             <div style="font-size: 0.75rem; color: #64748b;">${new Date(report.timestamp * 1000).toLocaleString()}</div>

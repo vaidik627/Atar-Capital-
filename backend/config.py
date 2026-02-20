@@ -15,7 +15,7 @@ load_dotenv()
 # OpenAI API Configuration
 LLM_API_KEY = os.environ.get('OPENAI_API_KEY')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'openai/gpt-oss-120b')
-LLM_BASE_URL = os.environ.get('LLM_BASE_URL', "https://integrate.api.nvidia.com/v1")
+LLM_BASE_URL = os.environ.get('LLM_BASE_URL')
 
 # For NVIDIA API:
 # LLM_API_KEY = 'nvapi-...'
@@ -43,21 +43,46 @@ TEMPERATURE = 0         # 0 = deterministic, 1 = creative
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARSED_TEXT_DIR = os.path.join(BASE_DIR, 'backend', 'parsed_text')
 EXTRACTED_DATA_DIR = os.path.join(BASE_DIR, 'backend', 'extracted_data')
-PRE_BID_DATA_DIR = os.path.join(BASE_DIR, 'backend', 'pre_bid_analysis_json')
 REVENUE_DATA_DIR = os.path.join(BASE_DIR, 'backend', 'revenue_data_json')
 REPORTS_DIR = os.path.join(BASE_DIR, 'backend', 'reports')
+
+# ============================================================================
+# EXCEL TEMPLATE
+# ============================================================================
+
+EXCEL_TEMPLATE_PATH = os.environ.get('EXCEL_TEMPLATE_PATH')
+
+
+def get_excel_template_path() -> str:
+    if EXCEL_TEMPLATE_PATH and os.path.exists(EXCEL_TEMPLATE_PATH):
+        return EXCEL_TEMPLATE_PATH
+
+    base_parent = os.path.dirname(BASE_DIR)
+    candidates = []
+    try:
+        for name in os.listdir(base_parent):
+            if name.lower().endswith(('.xlsm', '.xlsx')):
+                candidates.append(os.path.join(base_parent, name))
+    except Exception:
+        candidates = []
+
+    if candidates:
+        candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        return candidates[0]
+
+    raise FileNotFoundError(
+        "Excel template not found. Set EXCEL_TEMPLATE_PATH env var or place a .xlsm/.xlsx next to the project root."
+    )
 
 # Create directories immediately on import
 os.makedirs(PARSED_TEXT_DIR, exist_ok=True)
 os.makedirs(EXTRACTED_DATA_DIR, exist_ok=True)
-os.makedirs(PRE_BID_DATA_DIR, exist_ok=True)
 os.makedirs(REVENUE_DATA_DIR, exist_ok=True)
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 print(f"📁 Config loaded:")
 print(f"   Parsed text dir: {PARSED_TEXT_DIR}")
 print(f"   Extracted data dir: {EXTRACTED_DATA_DIR}")
-print(f"   Pre-Bid Analysis dir: {PRE_BID_DATA_DIR}")
 print(f"   Revenue Data dir: {REVENUE_DATA_DIR}")
 print(f"   Reports dir: {REPORTS_DIR}")
 print(f"   LLM Model: {LLM_MODEL}")

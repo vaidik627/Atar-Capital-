@@ -36,7 +36,6 @@ def get_extraction_schema():
             "ebitda_margin_percent": [],
             "net_margin_percent": []
         },
-        "financial_matrix": [],
         "market_intelligence": {
             "market_size": None,
             "market_growth_percent": None,
@@ -61,6 +60,69 @@ def get_extraction_schema():
             "recommendation": None,
             "confidence_percent": None,
             "rationale": None
+        },
+        "tale_of_the_tape": {
+            "capex": {
+                "year_wise": {},
+                "unit": "$M",
+                "source": None,
+                "formula_used": None
+            },
+            "change_in_working_capital": {
+                "year_wise": {},
+                "unit": "$M",
+                "source": None
+            },
+            "one_time_cost": {
+                "year_wise": {},
+                "unit": "$M",
+                "source": None
+            }
+        },
+        "free_cash_flow": {
+            "historical": {},
+            "forecast_next_5_years": {
+                "base_year": None,
+                "growth_rate_used": None,
+                "methodology": None
+            }
+        }
+    }
+
+
+def get_free_cash_flow_schema():
+    return {
+        "free_cash_flow": {
+            "historical": {},
+            "forecast_next_5_years": {
+                "base_year": "",
+                "growth_rate_used": "",
+                "methodology": "-"
+            }
+        }
+    }
+
+
+def get_capex_schema():
+    return {
+        "tale_of_the_tape": {
+            "capex": {
+                "year_wise": {},
+                "unit": "$M",
+                "source": None
+            }
+        }
+    }
+
+
+def get_change_in_working_capital_schema():
+    return {
+        "tale_of_the_tape": {
+            "change_in_working_capital": {
+                "year_wise": {},
+                "unit": "$M",
+                "source": None
+            }
         }
     }
 
@@ -80,7 +142,7 @@ def validate_schema(data):
     
     # Check top-level required fields
     required_fields = ['company_name', 'currency', 'company_summary', 'revenue', 
-                      'profit_metrics', 'market_intelligence', 'risk_analysis', 'ai_suggestion', 'financial_matrix']
+                      'profit_metrics', 'market_intelligence', 'risk_analysis', 'ai_suggestion']
     
     for field in required_fields:
         if field not in data:
@@ -99,10 +161,6 @@ def validate_schema(data):
         if not isinstance(data['profit_metrics'], dict):
             errors.append("Profit metrics must be a dictionary")
 
-    if 'financial_matrix' in data:
-        if not isinstance(data['financial_matrix'], list):
-            errors.append("Financial matrix must be a list")
-    
     if 'market_intelligence' in data:
         if not isinstance(data['market_intelligence'], dict):
             errors.append("Market intelligence must be a dictionary")

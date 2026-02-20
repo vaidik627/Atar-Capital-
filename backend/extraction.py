@@ -16,11 +16,15 @@ from .config import (
     MAX_OCR_CHARS, 
     MAX_TOKENS, 
     TEMPERATURE,
-    EXTRACTED_DATA_DIR,
-    PRE_BID_DATA_DIR
+    EXTRACTED_DATA_DIR
 )
-from .schema import get_extraction_schema, validate_schema
-from .revenue_extraction import extract_financial_matrix
+from .schema import (
+    get_extraction_schema,
+    get_free_cash_flow_schema,
+    get_capex_schema,
+    get_change_in_working_capital_schema,
+    validate_schema
+)
 
 # ============================================================================
 # MAIN EXTRACTION FUNCTION
@@ -151,6 +155,88 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
         # Parse JSON (handle potential markdown wrapping)
         extracted_data = _parse_json_safely(raw_content)
         print(f"✓ JSON parsed successfully")
+
+        extracted_data = _normalize_extracted_data(extracted_data)
+
+        try:
+            capex_only = _extract_capex_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            capex_obj = None
+            if isinstance(capex_only, dict):
+                tot = capex_only.get("tale_of_the_tape")
+                if isinstance(tot, dict):
+                    capex_obj = tot.get("capex")
+
+            if isinstance(capex_obj, dict):
+                tale = extracted_data.get("tale_of_the_tape")
+                if not isinstance(tale, dict):
+                    tale = {}
+                tale = dict(tale)
+                tale["capex"] = capex_obj
+                extracted_data["tale_of_the_tape"] = tale
+
+            extracted_data["tale_of_the_tape"] = _normalize_tale_of_the_tape(
+                extracted_data.get("tale_of_the_tape"),
+                extracted_data
+            )
+        except Exception as e:
+            print(f"⚠️  Separate CAPEX extraction failed: {e}")
+            extracted_data["tale_of_the_tape"] = _normalize_tale_of_the_tape(
+                extracted_data.get("tale_of_the_tape"),
+                extracted_data
+            )
+
+        try:
+            wc_only = _extract_change_in_working_capital_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            wc_obj = None
+            if isinstance(wc_only, dict):
+                tot = wc_only.get("tale_of_the_tape")
+                if isinstance(tot, dict):
+                    wc_obj = tot.get("change_in_working_capital")
+
+            if isinstance(wc_obj, dict):
+                tale = extracted_data.get("tale_of_the_tape")
+                if not isinstance(tale, dict):
+                    tale = {}
+                tale = dict(tale)
+                tale["change_in_working_capital"] = wc_obj
+                extracted_data["tale_of_the_tape"] = tale
+
+            extracted_data["tale_of_the_tape"] = _normalize_tale_of_the_tape(
+                extracted_data.get("tale_of_the_tape"),
+                extracted_data
+            )
+        except Exception as e:
+            print(f"⚠️  Separate WC extraction failed: {e}")
+            extracted_data["tale_of_the_tape"] = _normalize_tale_of_the_tape(
+                extracted_data.get("tale_of_the_tape"),
+                extracted_data
+            )
+
+        try:
+            free_cash_flow_only = _extract_free_cash_flow_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            if isinstance(free_cash_flow_only, dict) and free_cash_flow_only:
+                extracted_data["free_cash_flow"] = _normalize_free_cash_flow(
+                    free_cash_flow_only.get("free_cash_flow"),
+                    extracted_data
+                )
+        except Exception as e:
+            print(f"⚠️  Separate FCF extraction failed: {e}")
+            extracted_data["free_cash_flow"] = _normalize_free_cash_flow(
+                extracted_data.get("free_cash_flow"),
+                extracted_data
+            )
         
         # Validate against schema
         is_valid, errors = validate_schema(extracted_data)
@@ -165,18 +251,6 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
         # Log extracted summary
         _log_extraction_summary(extracted_data)
         
-        # ---------------------------------------------------------------------
-        # STEP 5.5: EXTRACT DETAILED FINANCIAL MATRIX
-        # ---------------------------------------------------------------------
-        try:
-            financial_matrix = extract_financial_matrix(ocr_text, deal_id)
-            extracted_data['financial_matrix'] = financial_matrix.get('financials', [])
-            extracted_data['cash_flow_matrix'] = financial_matrix.get('cash_flow', [])
-        except Exception as e:
-            print(f"⚠️ Financial matrix extraction failed (skipping): {e}")
-            extracted_data['financial_matrix'] = []
-            extracted_data['cash_flow_matrix'] = []
-            
     except json.JSONDecodeError as e:
         error_msg = f"Failed to parse JSON: {e}"
         print(f"❌ {error_msg}")
@@ -191,7 +265,7 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
         print(f"❌ Validation error: {e}")
         traceback.print_exc()
         raise
-    
+
     # -------------------------------------------------------------------------
     # STEP 6: SAVE TO FILE SYSTEM
     # -------------------------------------------------------------------------
@@ -215,163 +289,348 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
     return extracted_data
 
 
-# ============================================================================
-# PRE-BID ANALYSIS EXTRACTION
-# ============================================================================
-
-def extract_pre_bid_analysis(ocr_text: str, deal_id: str = None) -> Dict[str, Any]:
-    """
-    Extract Pre-Bid Analysis data from OCR text.
-    """
-    print("\n" + "="*80)
-    print("🤖 PRE-BID ANALYSIS EXTRACTION - STARTED")
-    print("="*80)
-    
-    api_key = LLM_API_KEY
-    if not api_key:
-        raise ValueError("❌ No LLM API key provided.")
-        
-    client = OpenAI(api_key=api_key, base_url=LLM_BASE_URL)
-    
+def _extract_capex_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
     if len(ocr_text) > MAX_OCR_CHARS:
         ocr_text = ocr_text[:MAX_OCR_CHARS]
-    
-    print(f"\n🔍 Analyzing document for Pre-Bid Analysis... (Length: {len(ocr_text)})")
-    # Debug: Print a snippet of the text to ensure injection worked
-    print(f"Text Snippet: {ocr_text[-500:]}")
-    
+
     try:
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
-                {
-                    "role": "system", 
-                    "content": _build_pre_bid_extraction_prompt()
-                },
-                {
-                    "role": "user", 
-                    "content": f"Extract Pre-Bid Analysis data from this document:\n\n{ocr_text}"
-                }
+                {"role": "system", "content": _build_capex_prompt()},
+                {"role": "user", "content": f"Extract CAPEX from this OCR text:\n\n{ocr_text}"},
             ],
             response_format={"type": "json_object"},
             temperature=TEMPERATURE,
             max_tokens=MAX_TOKENS
         )
-        
-        raw_content = response.choices[0].message.content
-        extracted_data = _parse_json_safely(raw_content)
-        print(f"✓ Pre-Bid Analysis data extracted successfully")
-        
-        if deal_id:
-            save_pre_bid_data(deal_id, extracted_data)
-            
-        return extracted_data
-        
     except Exception as e:
-        print(f"❌ Pre-Bid Extraction failed: {e}")
-        traceback.print_exc()
+        error_msg = f"CAPEX-only LLM API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "CAPEX_API_FAILURE")
         raise
 
-def save_pre_bid_data(deal_id: str, data: Dict[str, Any]) -> Optional[str]:
-    """
-    Save extracted Pre-Bid Analysis data to JSON file.
-    """
+    raw_content = response.choices[0].message.content
+    if not raw_content:
+        raise ValueError("CAPEX-only LLM returned empty response")
+
+    capex_only = _parse_json_safely(raw_content)
+    if not isinstance(capex_only, dict):
+        raise ValueError("CAPEX-only LLM returned non-object JSON")
+    return capex_only
+
+
+def _build_capex_prompt() -> str:
+    capex_schema = json.dumps(get_capex_schema(), indent=2)
+    return f"""
+You are a financial data extraction assistant.
+
+Your task is to determine CAPEX for all available years from the provided OCR financial text.
+
+You MUST follow the hierarchy strictly.
+DO NOT hallucinate.
+DO NOT assume missing values.
+DO NOT fabricate inputs.
+
+Return ONLY valid JSON matching this schema exactly:
+{capex_schema}
+
+General Rules (Strict):
+- Extract values exactly as written.
+- Preserve units and signs.
+- Preserve year labels exactly (FY24, FY25, FY26B, FY27F, 2025E, etc.). Do NOT create missing years.
+- If inputs are insufficient, return "-" for that year.
+
+Step 1 — Direct Search (Priority)
+- Search for: Capital Expenditure, Capital Expenditures, CAPEX, Purchase of PPE, Additions to Fixed Assets.
+- If found: extract year-wise as written. source="direct".
+
+Step 2 — Calculate ONLY IF ALL PRESENT
+- Only calculate if BOTH years have:
+  - Opening Net PPE
+  - Closing Net PPE
+  - Depreciation is explicitly given
+- Formula: CAPEX = Closing PPE - Opening PPE + Depreciation
+- If depreciation is missing: DO NOT CALCULATE. Return "-".
+- source="calculated".
+
+Output Format (Strict)
+- Populate `tale_of_the_tape.capex.year_wise`.
+- For each year key: {{ "value": "<exact>", "source": "<source>" }}.
+- Allowed sources: direct | calculated | not_found
+- Do NOT include keys like "change", "total", "average" inside `year_wise`. Only specific years.
+"""
+
+
+def _extract_change_in_working_capital_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
+    if len(ocr_text) > MAX_OCR_CHARS:
+        ocr_text = ocr_text[:MAX_OCR_CHARS]
+
     try:
-        timestamp = int(time.time())
-        filename = f"{deal_id}_pre_bid_{timestamp}.json"
-        filepath = os.path.join(PRE_BID_DATA_DIR, filename)
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            
-        print(f"✓ Pre-Bid data saved: {filename}")
-        return filepath
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _build_change_in_working_capital_prompt()},
+                {"role": "user", "content": f"Extract Change in Working Capital (ΔWC) from this OCR text:\n\n{ocr_text}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS
+        )
     except Exception as e:
-        print(f"❌ Save Pre-Bid data failed: {e}")
-        return None
+        error_msg = f"WC-only LLM API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "WC_API_FAILURE")
+        raise
 
-def _build_pre_bid_extraction_prompt() -> str:
-    """
-    Build the system prompt for Pre-Bid Analysis extraction.
-    """
-    return """You are an expert financial analyst AI specialized in extracting deal structure data.
-    
-    Your task is to extract "Pre-Bid Analysis" data from the provided OCR text.
-    The text is generated by Google Document AI and may contain artifacts, unstructured formatting, or broken tables.
-    
-    **TARGET DATA:**
-    You need to find and extract the following sections:
-    1. **Summary**: Specifically "Atar Equity" details.
-    2. **Sources & Uses**: The "Sources" table and "Uses" table.
-    3. **Shareholder Returns**: Exit valuation and waterfall calculations.
-    4. **Distribution of Proceeds**: Returns to LP/GP.
+    raw_content = response.choices[0].message.content
+    if not raw_content:
+        raise ValueError("WC-only LLM returned empty response")
 
-    **CRITICAL EXTRACTION STRATEGY:**
-    - **Fuzzy Matching:** Headers might be slightly different (e.g., "Source of Funds" instead of "Sources"). Look for context.
-    - **OCR Artifacts:** Ignore random characters (e.g., "|", "_") around numbers.
-    - **Values:** Extract numeric values. Convert "(1,234)" to -1234. Convert "-" or "n/a" to 0.
-    - **Missing Data:** If a specific field is completely missing, return 0.
-    - **Context:** The data is often found in a "Deal Overview" or "Executive Summary" section if not labeled "Pre-Bid Analysis".
+    wc_only = _parse_json_safely(raw_content)
+    if not isinstance(wc_only, dict):
+        raise ValueError("WC-only LLM returned non-object JSON")
+    return wc_only
 
-    **OUTPUT SCHEMA:**
-    Return ONLY a JSON object with this exact structure:
 
-{
-  "summary": {
-    "atar_equity": {
-      "equity_at_close": number,
-      "capital_call": number,
-      "total_atar_equity": number
-    }
-  },
-  "sources_and_uses": {
-    "sources": {
-      "equity_at_close": number,
-      "ar": number,
-      "inventory": number,
-      "ppe": number,
-      "other": number,
-      "earnout": number,
-      "seller_note": number,
-      "seller_roll": number,
-      "total_sources": number,
-      "seller_proceeds_at_close_by_source": number,
-      "abl_financing": number,
-      "atar_equity": number
-    },
-    "uses": {
-      "purchase_price": number,
-      "wc_availability": number,
-      "transaction_fees": number,
-      "total_uses": number
-    }
-  },
-  "shareholder_returns": {
-    "exit": {
-      "ev_at_exit": number,
-      "plus_cash": number,
-      "less_debt": number,
-      "less_expenses": number,
-      "less_mgmt_ltip": number,
-      "less_seller_equity": number,
-      "atar_equity": number
-    }
-  },
-  "distribution_of_proceeds": {
-    "return_of_equity": number,
-    "interest_on_preferred_shares": number,
-    "lp_split_of_proceeds": number,
-    "lp_total_distribution": number,
-    "lp_moic": "string (e.g. 6.3x)",
-    "gp_split_of_proceeds": number
-  }
-}
+def _build_change_in_working_capital_prompt() -> str:
+    wc_schema = json.dumps(get_change_in_working_capital_schema(), indent=2)
+    return f"""
+You are a financial data extraction assistant.
 
-**RULES:**
-1. Extract numbers as raw numbers (e.g., 17106, not "17,106").
-2. If a value is missing or represented as "-", use 0.
-3. For MOIC, keep the "x" suffix if present, or extract as string.
-4. Ensure the structure is exactly as requested.
+Your task is to determine Change in Working Capital (ΔWC) for all available years from the provided OCR financial text.
+
+You MUST follow the hierarchy strictly.
+DO NOT hallucinate.
+DO NOT assume missing values.
+DO NOT fabricate inputs.
+
+Return ONLY valid JSON matching this schema exactly:
+{wc_schema}
+
+General Rules (Strict):
+- Extract values exactly as written in the OCR text.
+- Preserve units and sign (e.g., $1.2M, (3.4), -5,000).
+- Preserve year labels exactly (FY24, 2025E, FY26B, FY27F, etc.). Do NOT create missing years.
+- If data is insufficient -> return "-" and source="not_found".
+- Return pure mathematical result; do NOT flip sign for cash flow interpretation.
+
+Step 1 — Direct Extraction (Highest Priority)
+- Search for explicit mentions of:
+  - Change in Working Capital
+  - Change in Net Working Capital
+  - Change in NWC
+  - Net change in working capital
+  - Increase (Decrease) in Working Capital
+- If found:
+  - Extract values year-wise exactly as written.
+  - Do NOT calculate.
+  - source="direct"
+
+Step 2 — Calculate using Net Working Capital
+- If direct ΔWC is NOT found, search for:
+  - Net Working Capital
+  - Adjusted Net Working Capital
+- If Net Working Capital values exist for at least two consecutive years:
+  - For each year N (except the first available year):
+    - Change in WC (Year N) = NWC (Year N) − NWC (Year N-1)
+  - STRICT:
+    - Only calculate when BOTH years are available.
+    - Do NOT calculate if only one year exists.
+    - Do NOT interpolate missing years.
+    - Preserve sign exactly.
+    - source="calculated"
+
+Step 3 — Calculate using components (if NWC not given)
+- If Net Working Capital is NOT directly given, but BOTH exist for multiple years:
+  - Total Current Assets
+  - Total Current Liabilities
+- Then:
+  - For each year: NWC = Current Assets − Current Liabilities
+  - For each year N (except the first available year):
+    - Change in WC (Year N) = NWC (Year N) − NWC (Year N-1)
+  - STRICT:
+    - Do NOT compute if any required value is missing.
+    - Do NOT use partial components (e.g., inventory only).
+    - Do NOT estimate missing liabilities.
+    - If incomplete -> return "-" and source="not_found".
+    - source="calculated"
+
+Output Format (Strict)
+- Populate `tale_of_the_tape.change_in_working_capital.year_wise`.
+- For each year key: {{ "value": "<exact>", "source": "<source>" }}.
+- Allowed sources: direct | calculated | not_found
+- Do NOT include keys like "change", "total", "average" inside `year_wise`. Only specific years.
+"""
+
+
+def _extract_free_cash_flow_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
+    if len(ocr_text) > MAX_OCR_CHARS:
+        ocr_text = ocr_text[:MAX_OCR_CHARS]
+
+    try:
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _build_free_cash_flow_prompt()},
+                {"role": "user", "content": f"Extract and forecast Free Cash Flow from this OCR text:\n\n{ocr_text}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS
+        )
+    except Exception as e:
+        error_msg = f"FCF-only LLM API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "FCF_API_FAILURE")
+        raise
+
+    raw_content = response.choices[0].message.content
+    if not raw_content:
+        raise ValueError("FCF-only LLM returned empty response")
+
+    fcf_only = _parse_json_safely(raw_content)
+    if not isinstance(fcf_only, dict):
+        raise ValueError("FCF-only LLM returned non-object JSON")
+    return fcf_only
+
+
+def _build_free_cash_flow_prompt() -> str:
+    fcf_schema = json.dumps(get_free_cash_flow_schema(), indent=2)
+    return f"""
+You are a financial data extraction and forecasting assistant.
+
+Your task is to determine Free Cash Flow (FCF) for all available historical, current, and forecast years from the provided OCR financial text.
+
+You MUST follow the hierarchy strictly.
+DO NOT hallucinate.
+DO NOT assume missing values.
+DO NOT fabricate inputs.
+If insufficient data exists for a step, move to the next allowed step.
+
+Return ONLY valid JSON matching this schema exactly:
+{fcf_schema}
+
+General Rules:
+- Extract values exactly as written.
+- Preserve units and signs.
+- Preserve year labels exactly (FY24, 2025E, 2026F, FY26B, FY27F, etc.).
+- Do NOT normalize units unless clearly stated.
+- Do NOT invent missing years.
+- If a required input is missing → do NOT calculate using that method.
+
+Step 1 — Direct Extraction (Highest Priority)
+- Search for explicit mentions of:
+  - Free Cash Flow
+  - FCF
+  - Free Cash Flow to Firm
+  - Free Cash Flow to Equity
+  - Cash Flow After Capex
+- If found:
+  - Populate `free_cash_flow.historical` year-wise exactly as written.
+  - source="direct"
+  - method="direct"
+  - After direct extraction, still attempt Step 2 to fill any missing years (if inputs exist).
+
+Step 2 — Calculate (Fill Missing Years When Possible)
+- Preferred calculation:
+  - If BOTH exist for the same year:
+    - Cash Flow from Operating Activities (Operating Cash Flow)
+    - Capital Expenditures (CAPEX)
+  - Then:
+    - FCF = Operating Cash Flow − CAPEX
+    - method="OCF_minus_CAPEX"
+    - source="calculated"
+- Alternative calculation (only if above not available):
+  - If ALL exist for the same year:
+    - EBITDA
+    - Change in Working Capital
+    - CAPEX
+    - Cash Taxes (only if explicitly provided)
+  - Then:
+    - FCF = EBITDA − Change in Working Capital − CAPEX − Cash Taxes (if clearly disclosed)
+    - method="EBITDA_based"
+    - source="calculated"
+- STRICT:
+  - Do NOT assume tax rate.
+  - Do NOT estimate depreciation.
+  - Do NOT infer working capital.
+  - If any required component missing → do NOT calculate.
+
+Step 3 — Forecast Next 5 Years (Mandatory)
+- Forecast MUST be produced in ALL cases (whether direct or calculated FCF exists or not).
+- Inside forecast_next_5_years, include exactly five forecast year keys (in addition to base_year/growth_rate_used/methodology).
+- If Revenue exists and any deterministic forecasting method applies, populate the 5 forecast year values (do NOT output "-" for forecast values just because historical FCF is missing).
+- Forecasting must follow deterministic rules:
+  - A) If historical FCF exists for ≥ 3 years:
+    - Compute CAGR of last 3 available FCF years.
+    - Forecast next 5 years using that CAGR.
+    - methodology="FCF_CAGR"
+  - B) If only 1–2 years of FCF exist:
+    - Use Revenue CAGR (last 3 years if available).
+    - Apply historical average FCF Margin: FCF Margin = FCF / Revenue
+    - Projected FCF = Projected Revenue × Avg FCF Margin
+    - methodology="Revenue_margin_based"
+  - C) If NO FCF available but EBITDA & CAPEX exist:
+    - Estimate FCF Margin using:
+      - If WC available: FCF ≈ EBITDA − CAPEX − Change in WC
+      - If WC missing: FCF ≈ EBITDA − CAPEX
+    - Forecast using Revenue CAGR.
+    - methodology="EBITDA_proxy"
+  - D) If only Revenue exists:
+    - Base FCF Margin = 5% of revenue ONLY IF explicitly no financial components exist.
+    - If revenue missing → forecast="-"
+    - methodology="industry_proxy"
+- Forecast rules:
+  - Use most recent actual year as base (if available).
+  - Clearly state growth rate used.
+  - Do NOT invent macro assumptions.
+  - Do NOT exceed historical growth volatility.
+  - If insufficient data → forecast="-" and methodology="-".
+
+Sign Convention
+- Return mathematical values only.
+- Positive = cash generated.
+
+Output Format (Strict)
+- `free_cash_flow.historical` must include any year where FCF is found or calculable:
+  - `free_cash_flow.historical[<YEAR_LABEL>] = {"value":"<number or exact text>", "source":"direct|calculated|not_found", "method":"direct|OCF_minus_CAPEX|EBITDA_based|-"}`
+- Always return `free_cash_flow.forecast_next_5_years` with base_year/growth_rate_used/methodology and exactly 5 forecast years.
+
+Example Output Shape (Illustrative)
+{{
+  "free_cash_flow": {{
+    "historical": {{
+      "FY2023": {{"value": "12.3", "source": "direct", "method": "direct"}},
+      "FY2024": {{"value": "10.1", "source": "calculated", "method": "OCF_minus_CAPEX"}}
+    }},
+    "forecast_next_5_years": {{
+      "base_year": "2024",
+      "growth_rate_used": "8%",
+      "methodology": "FCF_CAGR",
+      "2025E": "10.9",
+      "2026E": "11.8",
+      "2027E": "12.7",
+      "2028E": "13.7",
+      "2029E": "14.8"
+    }}
+  }}
+}}
 """
 
 
@@ -482,6 +741,8 @@ def load_extracted_data(deal_id: str) -> Optional[Dict[str, Any]]:
         # Load and return
         with open(latest_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
+
+        data = _normalize_extracted_data(data)
         
         print(f"📂 Loaded: {os.path.basename(latest_file)}")
         return data
@@ -563,15 +824,731 @@ You must return data matching this exact structure:
    - Give confidence percentage (0-100)
    - Explain rationale briefly
 
+7. **Section 7: Tale of the Tape (Three Core Metrics)**
+      - **Task:** Extract and/or calculate for all available years:
+        1) CAPEX
+        2) Change in Working Capital
+        3) 1x Cost (Non-Recurring / EBITDA Normalizations)
+
+      - **General Rules (Strict):**
+        - Never hallucinate. Never assume. Never estimate.
+        - Extract values exactly as written.
+        - Preserve units and signs.
+        - Preserve year labels exactly (FY24, FY25, FY26B, etc.). Do NOT create artificial years.
+        - If inputs are insufficient, return "-" for that year.
+        - If only one year exists for a change calculation, return "-".
+        - If only two years exist, calculate change for the later year only.
+
+      - **Part A: CAPEX**
+        - Do NOT extract or calculate CAPEX in this call.
+        - Leave `tale_of_the_tape.capex` as an empty object or placeholders.
+        - CAPEX is extracted in a separate dedicated extraction step.
+
+      - **Part B: Change in Working Capital**
+        - Do NOT extract or calculate Change in Working Capital in this call.
+        - Leave `tale_of_the_tape.change_in_working_capital` as an empty object or placeholders.
+        - Change in Working Capital is extracted in a separate dedicated extraction step.
+
+      - **Part C: 1x Cost (Non-Recurring / EBITDA Normalizations)**
+        - **Step 3A — Direct Extraction (Priority):**
+          - Search for: "Total normalizations", "EBITDA normalizations", "Non-recurring", "Add-backs", "EBITDA reconciliation".
+          - If total normalizations table exists: extract value exactly. source="direct".
+        - **Step 3B — Calculate from EBITDA Bridge:**
+          - If BOTH exist for same year:
+            - Reported EBITDA
+            - Normalized / Adjusted EBITDA
+          - Then:
+            - 1x = Adjusted EBITDA - Reported EBITDA
+            - source="calculated_from_bridge"
+        - Otherwise: return "-" and source="not_found".
+
+      - **Strict Output Format (within schema):**
+        - Populate `tale_of_the_tape.one_time_cost.year_wise`.
+        - For each year key: `{{ "value": "<exact>", "source": "<source>" }}`.
+        - Allowed sources:
+          - 1x: direct | calculated_from_bridge | not_found
+        - Do NOT include keys like "change", "total", "average" inside `year_wise`. Only specific years.
+
+      - **Section 8: Free Cash Flow (FCF)**
+        - Do NOT extract or forecast Free Cash Flow in this call.
+        - Leave `free_cash_flow` as an empty object or placeholders.
+        - Free Cash Flow is extracted in a separate dedicated extraction step.
+
 **IMPORTANT RULES:**
 - Output **ONLY** valid JSON (no markdown, no code blocks)
-- If data is not found, use `null` or empty arrays `[]`
+- If data is not found:
+  - For `tale_of_the_tape.*.year_wise[year].value`, use "-" and source "not_found"
+  - For missing lists, use `[]`
+  - For missing scalar fields, use `null`
 - Do NOT fabricate numbers - only extract what's in the document
 - Include source_context to show where data was found
 - Use confidence levels: "high", "medium", "low"
-- All monetary values should be numbers (not strings with $ signs)
+- For Revenue / Profit Metrics arrays, `value` should be a number where possible.
 
 Extract the data now."""
+
+
+def _normalize_extracted_data(extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(extracted_data, dict):
+        return get_extraction_schema()
+
+    extracted_data = dict(extracted_data)
+    extracted_data["tale_of_the_tape"] = _normalize_tale_of_the_tape(
+        extracted_data.get("tale_of_the_tape"),
+        extracted_data
+    )
+    extracted_data["free_cash_flow"] = _normalize_free_cash_flow(
+        extracted_data.get("free_cash_flow"),
+        extracted_data
+    )
+
+    return extracted_data
+
+
+def normalize_extracted_data(extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+    return _normalize_extracted_data(extracted_data)
+
+
+def _normalize_free_cash_flow(free_cash_flow: Any, extracted_data_root: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(free_cash_flow, dict):
+        free_cash_flow = {}
+
+    normalized = dict(free_cash_flow)
+    historical = normalized.get("historical")
+
+    if not isinstance(historical, dict):
+        year_wise = normalized.get("year_wise")
+        if isinstance(year_wise, dict):
+            historical = year_wise
+        else:
+            historical = {}
+
+    normalized_historical: Dict[str, Dict[str, Any]] = {}
+    for year, val in historical.items():
+        if isinstance(val, dict):
+            value = val.get("value")
+            source = val.get("source")
+            method = val.get("method")
+        else:
+            value = val
+            source = None
+            method = None
+
+        normalized_historical[str(year)] = {
+            "value": "-" if value is None or value == "" else str(value),
+            "source": str(source) if source else "not_found",
+            "method": str(method) if method else "-"
+        }
+
+    forecast = normalized.get("forecast_next_5_years")
+    if not isinstance(forecast, dict):
+        forecast = {}
+
+    normalized_forecast = dict(forecast)
+    normalized_forecast.setdefault("base_year", "")
+    normalized_forecast.setdefault("growth_rate_used", "")
+    normalized_forecast.setdefault("methodology", "-")
+
+    normalized_fcf = {
+        "historical": normalized_historical,
+        "forecast_next_5_years": normalized_forecast
+    }
+
+    normalized_fcf = _ensure_fcf_historical(normalized_fcf, extracted_data_root)
+    return _ensure_fcf_forecast(normalized_fcf, extracted_data_root)
+
+
+def _ensure_fcf_historical(
+    normalized_fcf: Dict[str, Any],
+    extracted_data_root: Dict[str, Any]
+) -> Dict[str, Any]:
+    if not isinstance(normalized_fcf, dict):
+        normalized_fcf = {}
+
+    historical = normalized_fcf.get("historical")
+    if not isinstance(historical, dict):
+        historical = {}
+    historical = dict(historical)
+
+    def has_numeric_value(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        return _parse_number(item.get("value")) is not None
+
+    has_any_historical = any(has_numeric_value(v) for v in historical.values())
+
+    profit = extracted_data_root.get("profit_metrics")
+    profit = profit if isinstance(profit, dict) else {}
+
+    def collect_period_label_map(items: Any) -> Dict[int, str]:
+        out: Dict[int, str] = {}
+        if not isinstance(items, list):
+            return out
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            period = item.get("period")
+            y = _parse_year_int(str(period))
+            if y is None:
+                continue
+            out.setdefault(y, str(period))
+        return out
+
+    def collect_tale_year_label_map(metric_key: str) -> Dict[int, str]:
+        tale = extracted_data_root.get("tale_of_the_tape")
+        if not isinstance(tale, dict):
+            return {}
+        metric = tale.get(metric_key)
+        if not isinstance(metric, dict):
+            return {}
+        year_wise = metric.get("year_wise")
+        if not isinstance(year_wise, dict):
+            return {}
+        out: Dict[int, str] = {}
+        for label in year_wise.keys():
+            y = _parse_year_int(str(label))
+            if y is None:
+                continue
+            out.setdefault(y, str(label))
+        return out
+
+    fcf_items = profit.get("free_cash_flow")
+    fcf_label_map = collect_period_label_map(fcf_items)
+    for item in fcf_items if isinstance(fcf_items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        period = item.get("period")
+        y = _parse_year_int(str(period))
+        if y is None:
+            continue
+        v = item.get("value")
+        if v is None:
+            continue
+        label = str(period)
+        existing = historical.get(label)
+        if isinstance(existing, dict) and _parse_number(existing.get("value")) is not None:
+            continue
+        historical[label] = {
+            "value": str(v),
+            "source": "direct",
+            "method": "direct"
+        }
+
+    ocf_points = _collect_profit_metric_points(extracted_data_root, "operating_cash_flow")
+    capex_points = _collect_tale_metric_points(extracted_data_root, "capex")
+    if ocf_points and capex_points:
+        ocf_by_year = {y: v for y, v in ocf_points}
+        capex_by_year = {y: v for y, v in capex_points}
+        ocf_label_map = collect_period_label_map(profit.get("operating_cash_flow"))
+        capex_label_map = collect_tale_year_label_map("capex")
+
+        years = sorted(set(ocf_by_year.keys()) & set(capex_by_year.keys()))
+        for y in years:
+            ocf_val = ocf_by_year.get(y)
+            capex_val = capex_by_year.get(y)
+            if ocf_val is None or capex_val is None:
+                continue
+            fcf_calc = ocf_val - abs(capex_val)
+            label = capex_label_map.get(y) or ocf_label_map.get(y) or fcf_label_map.get(y) or str(y)
+            existing = historical.get(label)
+            if isinstance(existing, dict) and _parse_number(existing.get("value")) is not None:
+                continue
+            historical[label] = {
+                "value": _format_number(fcf_calc),
+                "source": "calculated",
+                "method": "OCF_minus_CAPEX"
+            }
+
+    if not has_any_historical and historical:
+        normalized_fcf["historical"] = historical
+    else:
+        normalized_fcf["historical"] = historical
+
+    return normalized_fcf
+
+
+def _ensure_fcf_forecast(
+    normalized_fcf: Dict[str, Any],
+    extracted_data_root: Dict[str, Any]
+) -> Dict[str, Any]:
+    if not isinstance(normalized_fcf, dict):
+        normalized_fcf = {}
+
+    historical = normalized_fcf.get("historical")
+    if not isinstance(historical, dict):
+        historical = {}
+
+    forecast = normalized_fcf.get("forecast_next_5_years")
+    if not isinstance(forecast, dict):
+        forecast = {}
+
+    forecast = dict(forecast)
+    forecast.setdefault("base_year", "")
+    forecast.setdefault("growth_rate_used", "")
+    forecast.setdefault("methodology", "-")
+
+    revenue_points = _collect_revenue_points(extracted_data_root)
+    if not revenue_points:
+        normalized_fcf["historical"] = historical
+        normalized_fcf["forecast_next_5_years"] = forecast
+        return normalized_fcf
+
+    base_year_int = _pick_base_year_int_from_revenue(extracted_data_root, revenue_points)
+    if base_year_int is None:
+        normalized_fcf["historical"] = historical
+        normalized_fcf["forecast_next_5_years"] = forecast
+        return normalized_fcf
+
+    existing_forecast_values = {
+        k: v for k, v in forecast.items()
+        if k not in {"base_year", "growth_rate_used", "methodology"}
+    }
+    existing_forecast_year_keys = list(existing_forecast_values.keys())
+    parsed_existing_forecast_years = [
+        (k, _parse_year_int(str(k))) for k in existing_forecast_year_keys
+    ]
+    parsed_existing_forecast_years = [
+        (k, y) for (k, y) in parsed_existing_forecast_years if y is not None
+    ]
+    parsed_existing_forecast_years.sort(key=lambda x: x[1])
+
+    if parsed_existing_forecast_years:
+        forecast_year_labels = [k for k, _ in parsed_existing_forecast_years][:5]
+        forecast_year_ints = [y for _, y in parsed_existing_forecast_years][:5]
+    else:
+        forecast_year_ints = [base_year_int + i for i in range(1, 6)]
+        forecast_year_labels = [f"{y}E" for y in forecast_year_ints]
+
+    has_any_numeric_forecast = any(_parse_number(v) is not None for v in existing_forecast_values.values())
+
+    if has_any_numeric_forecast:
+        forecast.setdefault("base_year", forecast.get("base_year") or str(base_year_int))
+        for label in forecast_year_labels:
+            forecast.setdefault(label, existing_forecast_values.get(label, "-"))
+        normalized_fcf["historical"] = historical
+        normalized_fcf["forecast_next_5_years"] = forecast
+        return normalized_fcf
+
+    projected_revenue, revenue_growth_rate_used = _project_revenue_next_5_years(
+        revenue_points,
+        base_year_int,
+        forecast_year_ints
+    )
+
+    if not projected_revenue:
+        forecast["base_year"] = str(base_year_int)
+        forecast["growth_rate_used"] = revenue_growth_rate_used or forecast.get("growth_rate_used", "")
+        forecast["methodology"] = "-"
+        for label in forecast_year_labels:
+            forecast[label] = "-"
+        normalized_fcf["historical"] = historical
+        normalized_fcf["forecast_next_5_years"] = forecast
+        return normalized_fcf
+
+    historical_fcf_points = _collect_historical_fcf_points(historical)
+    if len(historical_fcf_points) >= 3:
+        fcf_cagr = _compute_cagr_from_last_n_points(historical_fcf_points, 3)
+        if fcf_cagr is None:
+            fcf_cagr = 0.0
+        base_fcf_year, base_fcf_value = historical_fcf_points[-1]
+        forecast["base_year"] = str(base_fcf_year)
+        forecast["growth_rate_used"] = _format_percent(fcf_cagr)
+        forecast["methodology"] = "FCF_CAGR"
+        for y_int, label in zip(forecast_year_ints, forecast_year_labels):
+            years_forward = y_int - base_fcf_year
+            if years_forward <= 0:
+                forecast[label] = "-"
+                continue
+            forecast[label] = _format_number(base_fcf_value * ((1.0 + fcf_cagr) ** years_forward))
+        normalized_fcf["historical"] = historical
+        normalized_fcf["forecast_next_5_years"] = forecast
+        return normalized_fcf
+
+    revenue_by_year = {y: v for y, v in revenue_points}
+    if len(historical_fcf_points) in (1, 2):
+        margins: List[float] = []
+        for y, f in historical_fcf_points:
+            rev = revenue_by_year.get(y)
+            if rev is None or rev == 0:
+                continue
+            margins.append(f / rev)
+        if margins:
+            avg_margin = sum(margins) / len(margins)
+            forecast["base_year"] = str(base_year_int)
+            forecast["growth_rate_used"] = revenue_growth_rate_used or ""
+            forecast["methodology"] = "Revenue_margin_based"
+            for y_int, label in zip(forecast_year_ints, forecast_year_labels):
+                rev = projected_revenue.get(y_int)
+                forecast[label] = _format_number(rev * avg_margin) if rev is not None else "-"
+            normalized_fcf["historical"] = historical
+            normalized_fcf["forecast_next_5_years"] = forecast
+            return normalized_fcf
+
+    ebitda_points = _collect_profit_metric_points(extracted_data_root, "ebitda")
+    capex_points = _collect_tale_metric_points(extracted_data_root, "capex")
+    wc_points = _collect_tale_metric_points(extracted_data_root, "change_in_working_capital")
+
+    if ebitda_points and capex_points:
+        ebitda_by_year = {y: v for y, v in ebitda_points}
+        capex_by_year = {y: v for y, v in capex_points}
+        wc_by_year = {y: v for y, v in wc_points} if wc_points else {}
+
+        candidate_years = sorted(set(ebitda_by_year.keys()) & set(capex_by_year.keys()))
+        proxy_year = candidate_years[-1] if candidate_years else None
+
+        if proxy_year is not None:
+            ebitda_val = ebitda_by_year.get(proxy_year)
+            capex_val = capex_by_year.get(proxy_year)
+            wc_val = wc_by_year.get(proxy_year, 0.0)
+            if ebitda_val is not None and capex_val is not None:
+                proxy_fcf = ebitda_val - abs(capex_val) - (wc_val if wc_val is not None else 0.0)
+                base_rev = revenue_by_year.get(proxy_year)
+                proxy_margin = (proxy_fcf / base_rev) if base_rev not in (None, 0) else None
+
+                forecast["base_year"] = str(base_year_int)
+                forecast["growth_rate_used"] = revenue_growth_rate_used or ""
+                forecast["methodology"] = "EBITDA_proxy"
+                for y_int, label in zip(forecast_year_ints, forecast_year_labels):
+                    rev = projected_revenue.get(y_int)
+                    if rev is None:
+                        forecast[label] = "-"
+                        continue
+                    if proxy_margin is not None:
+                        forecast[label] = _format_number(rev * proxy_margin)
+                    else:
+                        base_rev_for_scaling = projected_revenue.get(base_year_int)
+                        if base_rev_for_scaling not in (None, 0):
+                            forecast[label] = _format_number(proxy_fcf * (rev / base_rev_for_scaling))
+                        else:
+                            forecast[label] = "-"
+                normalized_fcf["historical"] = historical
+                normalized_fcf["forecast_next_5_years"] = forecast
+                return normalized_fcf
+
+    forecast["base_year"] = str(base_year_int)
+    forecast["growth_rate_used"] = revenue_growth_rate_used or ""
+    forecast["methodology"] = "industry_proxy"
+    for y_int, label in zip(forecast_year_ints, forecast_year_labels):
+        rev = projected_revenue.get(y_int)
+        forecast[label] = _format_number(rev * 0.05) if rev is not None else "-"
+
+    normalized_fcf["historical"] = historical
+    normalized_fcf["forecast_next_5_years"] = forecast
+    return normalized_fcf
+
+
+def _collect_historical_fcf_points(historical: Dict[str, Any]) -> List[tuple]:
+    points: List[tuple] = []
+    if not isinstance(historical, dict):
+        return points
+    for year_label, obj in historical.items():
+        year_int = _parse_year_int(str(year_label))
+        if year_int is None:
+            continue
+        if isinstance(obj, dict):
+            v = _parse_number(obj.get("value"))
+        else:
+            v = _parse_number(obj)
+        if v is None:
+            continue
+        points.append((year_int, v))
+    points.sort(key=lambda x: x[0])
+    return points
+
+
+def _collect_revenue_points(extracted_data_root: Dict[str, Any]) -> List[tuple]:
+    revenue = extracted_data_root.get("revenue")
+    if not isinstance(revenue, dict):
+        return []
+
+    points: Dict[int, float] = {}
+
+    def add_point(period: Any, value: Any):
+        year_int = _parse_year_int(str(period)) if period is not None else None
+        v = _parse_number(value)
+        if year_int is None or v is None:
+            return
+        points.setdefault(year_int, float(v))
+
+    for item in revenue.get("history") or []:
+        if isinstance(item, dict):
+            add_point(item.get("period"), item.get("value"))
+
+    present = revenue.get("present")
+    if isinstance(present, dict):
+        add_point(present.get("period"), present.get("value"))
+
+    for item in revenue.get("future") or []:
+        if isinstance(item, dict):
+            add_point(item.get("period"), item.get("value"))
+
+    return sorted(points.items(), key=lambda x: x[0])
+
+
+def _collect_profit_metric_points(extracted_data_root: Dict[str, Any], metric_key: str) -> List[tuple]:
+    profit = extracted_data_root.get("profit_metrics")
+    if not isinstance(profit, dict):
+        return []
+    items = profit.get(metric_key)
+    if not isinstance(items, list):
+        return []
+
+    points: Dict[int, float] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        y = _parse_year_int(str(item.get("period")))
+        v = _parse_number(item.get("value"))
+        if y is None or v is None:
+            continue
+        points.setdefault(y, float(v))
+    return sorted(points.items(), key=lambda x: x[0])
+
+
+def _collect_tale_metric_points(extracted_data_root: Dict[str, Any], metric_key: str) -> List[tuple]:
+    tale = extracted_data_root.get("tale_of_the_tape")
+    if not isinstance(tale, dict):
+        return []
+    metric = tale.get(metric_key)
+    if not isinstance(metric, dict):
+        return []
+    year_wise = metric.get("year_wise")
+    if not isinstance(year_wise, dict):
+        return []
+
+    points: Dict[int, float] = {}
+    for year_label, obj in year_wise.items():
+        y = _parse_year_int(str(year_label))
+        if y is None:
+            continue
+        if isinstance(obj, dict):
+            v = _parse_number(obj.get("value"))
+        else:
+            v = _parse_number(obj)
+        if v is None:
+            continue
+        points.setdefault(y, float(v))
+    return sorted(points.items(), key=lambda x: x[0])
+
+
+def _pick_base_year_int_from_revenue(
+    extracted_data_root: Dict[str, Any],
+    revenue_points: List[tuple]
+) -> Optional[int]:
+    revenue = extracted_data_root.get("revenue")
+    if isinstance(revenue, dict):
+        years: List[int] = []
+        for item in revenue.get("history") or []:
+            if not isinstance(item, dict):
+                continue
+            y = _parse_year_int(str(item.get("period")))
+            if y is not None:
+                years.append(y)
+        if years:
+            return max(years)
+
+        present = revenue.get("present")
+        if isinstance(present, dict):
+            y = _parse_year_int(str(present.get("period")))
+            if y is not None:
+                return y
+
+    if not revenue_points:
+        return None
+    return max(y for y, _ in revenue_points)
+
+
+def _project_revenue_next_5_years(
+    revenue_points: List[tuple],
+    base_year_int: int,
+    forecast_year_ints: List[int]
+) -> tuple:
+    revenue_by_year = {y: v for y, v in revenue_points}
+
+    projected: Dict[int, float] = {}
+    for y in forecast_year_ints:
+        if y in revenue_by_year:
+            projected[y] = revenue_by_year[y]
+
+    if len(projected) == len(forecast_year_ints):
+        return projected, ""
+
+    last_points = [(y, v) for y, v in revenue_points if v is not None]
+    last_points.sort(key=lambda x: x[0])
+    last_points = last_points[-5:]
+
+    growth_rate_used = ""
+    cagr = _compute_cagr_from_last_n_points(last_points, 3) if len(last_points) >= 3 else None
+    if cagr is None and len(last_points) >= 2:
+        first_y, first_v = last_points[-2]
+        last_y, last_v = last_points[-1]
+        if first_v not in (None, 0) and last_v is not None and last_y > first_y:
+            cagr = (last_v / first_v) ** (1.0 / (last_y - first_y)) - 1.0
+
+    if cagr is not None:
+        max_vol = _max_abs_yoy(last_points)
+        if max_vol is not None and abs(cagr) > max_vol:
+            cagr = max_vol if cagr > 0 else -max_vol
+        growth_rate_used = _format_percent(cagr)
+
+    last_known_year = max(y for y, _ in revenue_points)
+    last_known_value = revenue_by_year.get(last_known_year)
+
+    if last_known_value is None or cagr is None:
+        return projected, growth_rate_used
+
+    for y in forecast_year_ints:
+        if y in projected:
+            continue
+        years_forward = y - last_known_year
+        if years_forward <= 0:
+            continue
+        projected[y] = float(last_known_value) * ((1.0 + cagr) ** years_forward)
+
+    return projected, growth_rate_used
+
+
+def _compute_cagr_from_last_n_points(points: List[tuple], n: int) -> Optional[float]:
+    if len(points) < n:
+        return None
+    pts = sorted(points, key=lambda x: x[0])[-n:]
+    start_y, start_v = pts[0]
+    end_y, end_v = pts[-1]
+    if start_v in (None, 0) or end_v is None:
+        return None
+    years = end_y - start_y
+    if years <= 0:
+        return None
+    if start_v <= 0 or end_v <= 0:
+        return None
+    return (end_v / start_v) ** (1.0 / years) - 1.0
+
+
+def _max_abs_yoy(points: List[tuple]) -> Optional[float]:
+    pts = sorted(points, key=lambda x: x[0])
+    yoys: List[float] = []
+    for (y1, v1), (y2, v2) in zip(pts, pts[1:]):
+        if v1 in (None, 0) or v2 is None:
+            continue
+        if y2 <= y1:
+            continue
+        yoys.append((v2 / v1) - 1.0)
+    if not yoys:
+        return None
+    return max(abs(x) for x in yoys)
+
+
+def _parse_year_int(label: str) -> Optional[int]:
+    if not label:
+        return None
+    m = re.search(r"(19\d{2}|20\d{2})", label)
+    if m:
+        return int(m.group(1))
+    m2 = re.search(r"-(\d{2})\b", label)
+    if m2:
+        yy = int(m2.group(1))
+        return 2000 + yy if yy <= 50 else 1900 + yy
+    m3 = re.search(r"\bFY\s?(\d{2})(?!\d)", label, re.IGNORECASE)
+    if m3:
+        yy = int(m3.group(1))
+        return 2000 + yy if yy <= 50 else 1900 + yy
+    return None
+
+
+def _parse_number(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if s == "" or s == "-":
+        return None
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1]
+    s = s.replace(",", "")
+    s = re.sub(r"[^0-9.\-]", "", s)
+    if s in ("", "-", "."):
+        return None
+    try:
+        num = float(s)
+    except Exception:
+        return None
+    return -num if neg else num
+
+
+def _format_number(value: float) -> str:
+    if value is None:
+        return "-"
+    if abs(value) >= 1000:
+        return str(round(value, 2))
+    return str(round(value, 2))
+
+
+def _format_percent(value: float) -> str:
+    if value is None:
+        return ""
+    return f"{round(value * 100.0, 2)}%"
+
+
+def _normalize_tale_of_the_tape(
+    tale_of_the_tape: Any,
+    extracted_data_root: Dict[str, Any]
+) -> Dict[str, Any]:
+    if not isinstance(tale_of_the_tape, dict):
+        tale_of_the_tape = {}
+
+    normalized = dict(tale_of_the_tape)
+    alt_root_metrics = {}
+    for metric_key in ("capex", "change_in_working_capital", "one_time_cost"):
+        if isinstance(extracted_data_root.get(metric_key), dict):
+            alt_root_metrics[metric_key] = extracted_data_root.get(metric_key)
+
+    reserved_metric_keys = {"year_wise", "unit", "source", "formula_used", "method"}
+
+    for metric_key in ("capex", "change_in_working_capital", "one_time_cost"):
+        metric_obj = normalized.get(metric_key)
+        if not isinstance(metric_obj, dict):
+            metric_obj = {}
+
+        year_wise = metric_obj.get("year_wise")
+        if not isinstance(year_wise, dict):
+            year_wise = {}
+
+        for maybe_year, maybe_val in list(metric_obj.items()):
+            if maybe_year in reserved_metric_keys:
+                continue
+            if isinstance(maybe_val, (dict, str, int, float)) or maybe_val is None:
+                year_wise.setdefault(maybe_year, maybe_val)
+
+        if metric_key in alt_root_metrics:
+            for year, val in alt_root_metrics[metric_key].items():
+                year_wise.setdefault(year, val)
+
+        normalized_year_wise: Dict[str, Dict[str, Any]] = {}
+        fallback_source = metric_obj.get("source") or "not_found"
+        for year, val in year_wise.items():
+            if isinstance(val, dict):
+                value = val.get("value")
+                source = val.get("source") or fallback_source
+            else:
+                value = val
+                source = fallback_source
+
+            normalized_year_wise[str(year)] = {
+                "value": "-" if value is None or value == "" else str(value),
+                "source": str(source) if source else "not_found"
+            }
+
+        metric_obj["year_wise"] = normalized_year_wise
+        metric_obj.setdefault("unit", "$M")
+        normalized[metric_key] = metric_obj
+
+    for metric_key in alt_root_metrics.keys():
+        extracted_data_root.pop(metric_key, None)
+
+    return normalized
 
 
 def _parse_json_safely(content: str) -> Dict[str, Any]:
