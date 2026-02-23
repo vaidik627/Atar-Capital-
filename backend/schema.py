@@ -25,6 +25,7 @@ def get_extraction_schema():
         "profit_metrics": {
             "gross_profit": [],
             "operating_income": [],
+            "operating_expenses": [],
             "ebitda": [],
             "adjusted_ebitda": [],
             "net_income": [],
@@ -86,6 +87,14 @@ def get_extraction_schema():
                 "growth_rate_used": None,
                 "methodology": None
             }
+        },
+        "balance_sheet": {
+            "assets": [],
+            "liabilities": [],
+            "equity": []
+        },
+        "debt_profile": {
+            "facilities": []
         }
     }
 
@@ -123,6 +132,46 @@ def get_change_in_working_capital_schema():
                 "unit": "$M",
                 "source": None
             }
+        }
+    }
+
+
+def get_balance_sheet_schema():
+    return {
+        "balance_sheet": {
+            "assets": [
+                {
+                    "item_name": "Cash and cash equivalents",
+                    "values": [{"period": "FY22", "value": 100}]
+                }
+            ],
+            "liabilities": [
+                {
+                    "item_name": "Accounts payable",
+                    "values": [{"period": "FY22", "value": 50}]
+                }
+            ],
+            "equity": [
+                 {
+                    "item_name": "Total equity",
+                    "values": [{"period": "FY22", "value": 50}]
+                }
+            ]
+        }
+    }
+
+
+def get_debt_profile_schema():
+    return {
+        "debt_profile": {
+            "facilities": [
+                {
+                    "name": "Term Loan A",
+                    "balance": 500,
+                    "interest_rate_percent": 5.5,
+                    "amortization_per_year": 10
+                }
+            ]
         }
     }
 
@@ -204,6 +253,7 @@ def get_schema_documentation():
     profit_metrics: object
         gross_profit: array
         operating_income: array
+        operating_expenses: array
         ebit: array
         ebitda: array
         adjusted_ebitda: array
@@ -236,6 +286,14 @@ def get_schema_documentation():
         recommendation: string (Buy/Sell/Hold)
         confidence_percent: number (0-100)
         rationale: string
+        
+    balance_sheet: object
+        assets: array of {item_name: string, values: array of {period, value}}
+        liabilities: array of {item_name: string, values: array of {period, value}}
+        equity: array of {item_name: string, values: array of {period, value}}
+        
+    debt_profile: object
+        facilities: array of {name, balance, interest_rate_percent, amortization_per_year}
     """
 
 

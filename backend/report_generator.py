@@ -81,7 +81,9 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
     filepath = os.path.join(REPORTS_DIR, filename)
 
     template_path = template_path or get_excel_template_path()
-    wb = load_workbook(template_path, keep_vba=True, data_only=False)
+    # Load with data_only=True so openpyxl reads cached cell values, not formula strings.
+    # This prevents #DIV/0! / formula strings from leaking into our output.
+    wb = load_workbook(template_path, keep_vba=True, data_only=True)
 
     updated_any = False
     base_year = _infer_base_year(data)
@@ -96,18 +98,28 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
 
         row_map = _detect_row_map(ws)
         if not any(isinstance(v, int) for v in row_map.values()):
-            # print(f"DEBUG: No rows mapped in '{ws.title}'")
+            if _sheet_contains_text(ws, "Assets") and _sheet_contains_text(ws, "Liabilities"):
+                bs_data = data.get("balance_sheet")
+                if bs_data:
+                    _write_balance_sheet_to_excel(ws, year_blocks, bs_data, unit_scale)
+                    updated_any = True
             continue
         # print(f"DEBUG: Row map found: {row_map}")
 
         _update_template_header(ws, deal_name, data.get("currency"))
 
-        for block in year_blocks:
-            _rewrite_year_header_row(ws, block, base_year)
-        year_blocks = _detect_year_blocks(ws)
-        _clear_template_inputs(ws, year_blocks, row_map)
+        from typing import List
 
         revenue_by_year = _extract_series_by_year(_collect_revenue_items(data), unit_scale)
+        actual_years_sorted = _get_actual_years_from_data(data, base_year)
+        if actual_years_sorted:
+            base_year = actual_years_sorted[-1]
+
+
+        for block in year_blocks:
+            _rewrite_year_header_row(ws, block, base_year, actual_years_sorted)
+        year_blocks = _detect_year_blocks(ws)
+        _clear_template_inputs(ws, year_blocks, row_map)
 
         gross_profit_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("gross_profit", []), unit_scale)
         ebitda_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("ebitda", []), unit_scale)
@@ -125,26 +137,20 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         gross_profit_mgmt = gross_profit_by_year.copy()
         ebitda_mgmt = ebitda_by_year.copy()
 
-        # Fill projections with different assumptions
-        _fill_future_projections(base_year, revenue_atar, gross_profit_atar, ebitda_atar, mode="atar")
-        _fill_future_projections(base_year, revenue_mgmt, gross_profit_mgmt, ebitda_mgmt, mode="management")
-
-        capex_by_year = _extract_tale_year_wise(data, "capex", unit_scale)
-        wc_by_year = _extract_tale_year_wise(data, "change_in_working_capital", unit_scale)
-        one_time_by_year = _extract_tale_year_wise(data, "one_time_cost", unit_scale)
-
-        fcf_hist_by_year, fcf_forecast_by_year = _extract_fcf(data, unit_scale)
-
-        # Derive secondary metrics for both scenarios
-        cogs_atar = _derive_cogs(revenue_atar, gross_profit_atar)
-        cogs_mgmt = _derive_cogs(revenue_mgmt, gross_profit_mgmt)
-        
         operating_income_by_year = _extract_series_by_year(
             data.get("profit_metrics", {}).get("operating_income", []),
             unit_scale,
         )
         
-        # OpEx for ATAR
+        operating_expense_by_year = _extract_series_by_year(
+            data.get("profit_metrics", {}).get("operating_expenses", []),
+            unit_scale,
+        )
+        
+        # OpEx for Actual -> MUST be strictly extracted Operating Expenses (no derivation allowed)
+        opex_actual = operating_expense_by_year
+
+        # OpEx for ATAR -> Fallback to derived if missing for projections
         opex_atar = _derive_opex(gross_profit_atar, operating_income_by_year)
         if gross_profit_atar and ebitda_atar:
             for y in set(gross_profit_atar.keys()) & set(ebitda_atar.keys()):
@@ -157,72 +163,198 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
             for y in set(gross_profit_mgmt.keys()) & set(ebitda_mgmt.keys()):
                 if y not in opex_mgmt:
                     opex_mgmt[y] = gross_profit_mgmt[y] - ebitda_mgmt[y]
+
+        # Fill projections with different assumptions
+        _fill_future_projections(
+            base_year, 
+            revenue_atar, 
+            gross_profit_atar, 
+            operating_income_by_year.copy(),
+            opex_atar,
+            ebitda_atar, 
+            mode="atar"
+        )
+        _fill_future_projections(
+            base_year, 
+            revenue_mgmt, 
+            gross_profit_mgmt, 
+            operating_income_by_year.copy(),
+            opex_mgmt,
+            ebitda_mgmt, 
+            mode="management"
+        )
+
+        # Derive secondary metrics for both scenarios
+        cogs_atar = _derive_cogs(revenue_atar, gross_profit_atar)
+        cogs_mgmt = _derive_cogs(revenue_mgmt, gross_profit_mgmt)
         
+        capex_by_year = _extract_tale_year_wise(data, "capex", unit_scale)
+        wc_by_year = _extract_tale_year_wise(data, "change_in_working_capital", unit_scale)
+        one_time_by_year = _extract_tale_year_wise(data, "one_time_cost", unit_scale)
+
+        fcf_hist_by_year, fcf_forecast_by_year = _extract_fcf(data, unit_scale)
+
         if not adj_ebitda_by_year:
             adj_ebitda_by_year = _derive_adj_ebitda(ebitda_by_year, one_time_by_year)
+            
+        adj_ebitda_atar = _derive_adj_ebitda(ebitda_atar, one_time_by_year)
+        adj_ebitda_mgmt = _derive_adj_ebitda(ebitda_mgmt, one_time_by_year)
 
         fcf_all = dict(fcf_hist_by_year)
-        for y, v in fcf_forecast_by_year.items():
-            fcf_all.setdefault(y, v)
-
-        # Prepare Tale of the Tape projections for Atar and Management
         capex_atar, capex_mgmt = _prepare_tale_projections(base_year, capex_by_year, revenue_atar, revenue_mgmt, "capex")
         wc_atar, wc_mgmt = _prepare_tale_projections(base_year, wc_by_year, revenue_atar, revenue_mgmt, "wc")
         one_time_atar, one_time_mgmt = _prepare_tale_projections(base_year, one_time_by_year, revenue_atar, revenue_mgmt, "one_time")
 
+        # 1. Get dynamic projection years for Atar explicitly
+        projection_years = list(range(base_year + 1, base_year + 6))
+        
+        atar_blocks = _detect_all_atar_blocks(ws)
+        if not atar_blocks:
+            for b in year_blocks:
+                if b.get("role") == "projection" and b.get("year_cols"):
+                    yc = b["year_cols"]
+                    atar_blocks.append({
+                        "header_row": b.get("header_row", 5),
+                        "start_col": min(yc.values()),
+                        "end_col": max(yc.values()),
+                        "role": "projection"
+                    })
+
         for block in year_blocks:
+            role = block.get("role", "projection")
+            if role == "projection": 
+                continue # Skip generic projection handling here, handled securely by atar_blocks iteration below
+                
             year_cols = block.get("year_cols", {})
             if not isinstance(year_cols, dict) or not year_cols:
                 continue
-
-            role = block.get("role", "projection")
             
             # Select appropriate dataset
             if role == "management":
                 rev_set = revenue_mgmt
                 gp_set = gross_profit_mgmt
                 ebitda_set = ebitda_mgmt
+                adj_ebitda_set = adj_ebitda_mgmt
                 cogs_set = cogs_mgmt
                 opex_set = opex_mgmt
                 capex_set = capex_mgmt
                 wc_set = wc_mgmt
                 one_time_set = one_time_mgmt
             elif role == "actual":
-                # For actual block, use only historical data
                 rev_set = revenue_by_year
                 gp_set = gross_profit_by_year
                 ebitda_set = ebitda_by_year
+                adj_ebitda_set = adj_ebitda_by_year
                 cogs_set = _derive_cogs(revenue_by_year, gross_profit_by_year)
-                opex_set = _derive_opex(gross_profit_by_year, operating_income_by_year)
+                opex_set = opex_actual
                 capex_set = capex_by_year
                 wc_set = wc_by_year
                 one_time_set = one_time_by_year
-            else:
-                # Default to ATAR/AI projections for "projection" or "atar" blocks
-                rev_set = revenue_atar
-                gp_set = gross_profit_atar
-                ebitda_set = ebitda_atar
-                cogs_set = cogs_atar
-                opex_set = opex_atar
-                capex_set = capex_atar
-                wc_set = wc_atar
-                one_time_set = one_time_atar
 
-            _write_line(ws, row_map.get("net_revenue"), year_cols, rev_set)
-            _write_line(ws, row_map.get("cogs"), year_cols, cogs_set, force_negative=True)
-            _write_line(ws, row_map.get("gross_profit"), year_cols, gp_set)
-            _write_line(ws, row_map.get("operating_expense"), year_cols, opex_set, force_negative=True)
-            _write_line(ws, row_map.get("ebitda"), year_cols, ebitda_set)
-            _write_line(ws, row_map.get("pf_adjustments"), year_cols, one_time_set)
-            _write_line(ws, row_map.get("adj_ebitda"), year_cols, adj_ebitda_by_year if role == "actual" else (ebitda_set if not adj_ebitda_by_year else adj_ebitda_by_year))
+            _write_line(ws, row_map.get("net_revenue"), year_cols, rev_set, template_scale=unit_scale)
+            _write_line(ws, row_map.get("cogs"), year_cols, cogs_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("gross_profit"), year_cols, gp_set, template_scale=unit_scale)
+            _write_line(ws, row_map.get("operating_expense"), year_cols, opex_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("ebitda"), year_cols, ebitda_set, is_ebitda=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("pf_adjustments"), year_cols, one_time_set, template_scale=unit_scale)
+            _write_line(ws, row_map.get("adj_ebitda"), year_cols, adj_ebitda_set, is_ebitda=True, template_scale=unit_scale)
             
             # Tale of the Tape - populate based on role
-            _write_line(ws, row_map.get("capex"), year_cols, capex_set, force_negative=False)
-            _write_line(ws, row_map.get("change_in_wc"), year_cols, wc_set, force_negative=False)
-            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=False)
+            _write_line(ws, row_map.get("capex"), year_cols, capex_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("change_in_wc"), year_cols, wc_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=False, template_scale=unit_scale)
             # FCF row is typically a formula (=SUM), so we skip it or write only if no formula exists
-            _write_line(ws, row_map.get("free_cash_flow"), year_cols, fcf_all if role == "actual" else {}, force_negative=False)
+            _write_line(ws, row_map.get("free_cash_flow"), year_cols, fcf_all if role == "actual" else {}, force_negative=False, template_scale=unit_scale)
             updated_any = True
+            
+        # 2. Process all explicitly detected Atar Projection blocks exactly as requested over the dynamically mapped coordinates.
+        for block in atar_blocks:
+            n_cols = block["end_col"] - block["start_col"] + 1
+            year_cols = {}
+            for i in range(n_cols):
+                y = projection_years[i] if i < len(projection_years) else projection_years[-1] + (i - len(projection_years) + 1)
+                year_cols[y] = block["start_col"] + i
+                
+            rev_set = revenue_atar
+            gp_set = gross_profit_atar
+            ebitda_set = ebitda_atar
+            adj_ebitda_set = adj_ebitda_atar
+            cogs_set = cogs_atar
+            opex_set = opex_atar
+            capex_set = capex_atar
+            wc_set = wc_atar
+            one_time_set = one_time_atar
+            
+            _write_line(ws, row_map.get("net_revenue"), year_cols, rev_set, template_scale=unit_scale)
+            _write_line(ws, row_map.get("cogs"), year_cols, cogs_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("gross_profit"), year_cols, gp_set, template_scale=unit_scale)
+            _write_line(ws, row_map.get("operating_expense"), year_cols, opex_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("ebitda"), year_cols, ebitda_set, is_ebitda=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("pf_adjustments"), year_cols, one_time_set, template_scale=unit_scale)
+            _write_line(ws, row_map.get("adj_ebitda"), year_cols, adj_ebitda_set, is_ebitda=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("capex"), year_cols, capex_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("change_in_wc"), year_cols, wc_set, force_negative=True, template_scale=unit_scale)
+            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=False, template_scale=unit_scale)
+            updated_any = True
+
+        # ── 3. FCF + Debt model (pre-computed in Python, no Excel formulas) ──────
+        actual_year_cols: Dict[int, int] = {}
+        proj_year_cols: Dict[int, int] = {}
+        for block in year_blocks:
+            role_b = block.get("role", "projection")
+            yc = block.get("year_cols", {})
+            if role_b == "actual":
+                actual_year_cols.update(yc)
+
+        if atar_blocks:
+            ab0 = atar_blocks[0]
+            n0 = ab0["end_col"] - ab0["start_col"] + 1
+            for i in range(n0):
+                y = projection_years[i] if i < len(projection_years) else projection_years[-1] + (i - len(projection_years) + 1)
+                proj_year_cols[y] = ab0["start_col"] + i
+
+        actual_fcf_model = _compute_fcf_model(
+            years=sorted(actual_year_cols.keys()),
+            adj_ebitda=adj_ebitda_by_year,
+            capex=capex_by_year,
+            change_wc=wc_by_year,
+            one_time=one_time_by_year,
+            interest={},
+            amortization={},
+            is_actual=True,
+            fcf_hist=fcf_hist_by_year
+        )
+        _write_fcf_model_to_excel(ws, row_map, actual_year_cols, actual_fcf_model, template_scale=unit_scale)
+
+        proj_fcf_model = _compute_fcf_model(
+            years=projection_years,
+            adj_ebitda=adj_ebitda_atar,
+            capex=capex_atar,
+            change_wc=wc_atar,
+            one_time=one_time_atar,
+            interest={},
+            amortization={},
+            is_actual=False
+        )
+        for ab in atar_blocks:
+            n_ab = ab["end_col"] - ab["start_col"] + 1
+            ab_yc: Dict[int, int] = {}
+            for i in range(n_ab):
+                y = projection_years[i] if i < len(projection_years) else projection_years[-1] + (i - len(projection_years) + 1)
+                ab_yc[y] = ab["start_col"] + i
+            _write_fcf_model_to_excel(ws, row_map, ab_yc, proj_fcf_model, template_scale=unit_scale)
+
+        # ── 3.5 Inject Default Deal Assumptions ────────
+        if _sheet_contains_text(ws, "Purchase Assumptions") or _sheet_contains_text(ws, "Exit Assumptions"):
+            _inject_default_assumptions(ws, data)
+            _inject_debt_profile(ws, data)
+
+        # ── 4. Final pass: erase any remaining #DIV/0! / formula errors ────────
+        _erase_excel_errors(ws)
+
+    # Final global pass: erase errors on ALL sheets (handles cross-sheet formula refs)
+    for ws_all in wb.worksheets:
+        _erase_excel_errors(ws_all)
 
     if not updated_any:
         raise ValueError("Could not locate target sheets/rows to populate in the template.")
@@ -231,23 +363,179 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
     return filename
 
 
+def _safe_float(v: Any) -> Optional[float]:
+    """Return float or None – never NaN/inf."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+        if f != f or f == float("inf") or f == float("-inf"):
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_fcf_model(
+    years: List[int],
+    adj_ebitda: Dict[int, float],
+    capex: Dict[int, float],
+    change_wc: Dict[int, float],
+    one_time: Dict[int, float],
+    interest: Dict[int, float] = None,
+    amortization: Dict[int, float] = None,
+    is_actual: bool = False,
+    fcf_hist: Dict[int, float] = None
+) -> Dict[int, Dict[str, Optional[float]]]:
+    """
+    Compute the FCF / Debt model fully in Python for each year.
+    Returns a dict: { year: { field: float|None } }
+    """
+    interest = interest or {}
+    amortization = amortization or {}
+    fcf_hist = fcf_hist or {}
+    model: Dict[int, Dict[str, Optional[float]]] = {}
+    revolver_balance_prior = 0.0
+
+    for y in sorted(years):
+        ae = _safe_float(adj_ebitda.get(y))
+        cx = _safe_float(capex.get(y))
+        wc = _safe_float(change_wc.get(y))
+        ot = _safe_float(one_time.get(y))
+        inte = _safe_float(interest.get(y))
+        amor = _safe_float(amortization.get(y))
+
+        if is_actual:
+            # STEP 2 & 4: Actuals logic
+            # Use extracted FCF for actuals; DO NOT recalculate unless inputs exist.
+            if y in fcf_hist:
+                fcf = _safe_float(fcf_hist[y])
+            else:
+                fcf = None
+                
+            interest_total = inte
+            amort_total = amor
+            if interest_total is not None or amort_total is not None:
+                total_ds = (interest_total or 0.0) + (amort_total or 0.0)
+            else:
+                total_ds = None
+
+            if fcf is not None and total_ds is not None:
+                fcf_after_ds = fcf - total_ds
+            elif fcf is not None:
+                fcf_after_ds = fcf
+            else:
+                fcf_after_ds = None
+
+            draw = None
+            revolver_balance = None
+            remaining = None
+
+        else:
+            # STEP 3 & 8: Projection logic
+            adj_val = ae if ae is not None else 0.0
+            cx_val = cx if cx is not None else 0.0
+            wc_val = wc if wc is not None else 0.0
+            ot_val = ot if ot is not None else 0.0
+
+            # Step 3: FCF calculation for projections
+            fcf = adj_val - abs(cx_val) - wc_val - abs(ot_val)
+
+            # Step 4-5: Debt calculation
+            interest_total = inte if inte is not None else 0.0
+            amort_total = amor if amor is not None else 0.0
+            total_ds = interest_total + amort_total
+
+            # Step 6: FCF after debt
+            fcf_after_ds = fcf - total_ds
+
+            # Step 7: Revolver logic
+            if fcf_after_ds < 0:
+                draw = abs(fcf_after_ds)
+                remaining = 0.0
+            else:
+                draw = 0.0
+                remaining = fcf_after_ds
+
+            revolver_balance = revolver_balance_prior + draw
+            revolver_balance_prior = revolver_balance
+
+        model[y] = {
+            "free_cash_flow":     fcf,
+            "interest":           interest_total,
+            "amortization":       amort_total,
+            "total_debt_service": total_ds,
+            "fcf_after_debt":     fcf_after_ds,
+            "cash_avail_revolver": fcf_after_ds if not is_actual else None,
+            "revolver_draw":      draw,
+            "revolver_balance":   revolver_balance,
+            "remaining_cash":     remaining,
+        }
+
+    return model
+
+
+def _write_fcf_model_to_excel(
+    ws,
+    row_map: Dict[str, Optional[int]],
+    year_cols: Dict[int, int],
+    model: Dict[int, Dict[str, Optional[float]]],
+    template_scale: Optional[float] = None
+) -> None:
+    """Write pre-computed FCF/Debt model values to Excel cells. No formulas."""
+    field_keys = [
+        "free_cash_flow",
+        "interest",
+        "amortization",
+        "total_debt_service",
+        "fcf_after_debt",
+        "cash_avail_revolver",
+        "revolver_draw",
+        "revolver_balance",
+        "remaining_cash",
+    ]
+    for field in field_keys:
+        row = row_map.get(field)
+        if row is None:
+            continue
+        for y, col in year_cols.items():
+            year_data = model.get(y)
+            if year_data is None:
+                ws.cell(row=row, column=col).value = "-"
+                continue
+            v = _safe_float(year_data.get(field))
+            cell = ws.cell(row=row, column=col)
+            if v is None:
+                cell.value = "-"
+            else:
+                cell.value = v
+                if template_scale is not None:
+                    if template_scale >= 1_000_000.0:
+                        fmt = '"$"#,##0.0"M";[Red]("$"#,##0.0"M")'
+                    elif template_scale >= 1_000.0:
+                        fmt = '"$"#,##0.0,"M";[Red]("$"#,##0.0,"M")'
+                    else:
+                        fmt = '"$"#,##0.0,,"M";[Red]("$"#,##0.0,,"M")'
+                    cell.number_format = fmt
+
+
 def _update_template_header(ws, deal_name: str, currency: Any) -> None:
     deal_name = str(deal_name or "").strip()
     if not deal_name:
         return
 
-    replaced = False
     target_placeholders = {
-        "herff jones", 
-        "company name", 
-        "deal name", 
-        "project name", 
-        "client name", 
+        "herff jones",
+        "company name",
+        "deal name",
+        "project name",
+        "client name",
         "target name",
         "[company name]",
         "<company name>"
     }
-    
+
+    replaced = False
     for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 20), min_col=1, max_col=min(ws.max_column, 20)):
         for cell in row:
             v = cell.value
@@ -260,8 +548,89 @@ def _update_template_header(ws, deal_name: str, currency: Any) -> None:
         return
 
 
+def _inject_default_assumptions(ws, data: Dict[str, Any]) -> None:
+    """Injects default LBO assumptions (e.g. 5.0x Entry/Exit multiples) if not extracted."""
+    # 1. Entry Multiple
+    entry_row = _find_row_by_label(ws, ["Purchase Assumptions", "Entry Multiple", "Entry Assumptions"])
+    if entry_row:
+        for r in range(entry_row, min(entry_row + 5, ws.max_row)):
+            for c in range(1, 10):
+                v = ws.cell(row=r, column=c).value
+                if isinstance(v, str) and "multiple" in v.lower():
+                    target_cell = ws.cell(row=r+1, column=c)
+                    # Override dummy values or empty cells with 5.0x
+                    if not getattr(target_cell, 'has_formula', False) and not str(target_cell.value).startswith('='):
+                        target_cell.value = 5.0
+                    break
+
+    # 2. Exit Multiple
+    exit_row = _find_row_by_label(ws, ["Exit Assumptions", "Exit Multiple"])
+    if exit_row:
+        for r in range(exit_row, min(exit_row + 5, ws.max_row)):
+            for c in range(1, 10):
+                v = ws.cell(row=r, column=c).value
+                if isinstance(v, str) and "multiple" in v.lower():
+                    target_cell = ws.cell(row=r+1, column=c)
+                    if not getattr(target_cell, 'has_formula', False) and not str(target_cell.value).startswith('='):
+                        target_cell.value = 5.0
+                    break
 
 
+def _inject_debt_profile(ws, data: Dict[str, Any]) -> None:
+    """Injects extracted debt profile into Financing, Interest, and Amortization blocks."""
+    dp = data.get("debt_profile", {}).get("facilities", [])
+    if not isinstance(dp, list) or not dp:
+        return
+        
+    for fac in dp:
+        name = fac.get("name")
+        if not name: continue
+        bal = fac.get("balance")
+        rate = fac.get("interest_rate_percent")
+        amort = fac.get("amortization_per_year")
+        
+        name_lower = name.lower()
+        # Clean "term loan a" -> "term loan" to match template
+        if "term loan" in name_lower: name_lower = "term loan"
+        elif "revolver" in name_lower: name_lower = "revolver"
+        
+        # 1. Update Sources Block (cols 2 and 3)
+        sources_header = _find_row_by_label(ws, ["Financing Inputs", "Sources"])
+        if sources_header:
+            for r in range(sources_header, min(sources_header + 10, ws.max_row)):
+                v = str(ws.cell(row=r, column=2).value or "").lower()
+                if name_lower in v:
+                    if bal is not None:
+                        if not getattr(ws.cell(row=r, column=3), 'has_formula', False):
+                            ws.cell(row=r, column=3).value = float(bal)
+                    break
+
+        # 2. Update Interest block (cols 11, 25, 26 and rates 27, 28)
+        # Often Interest Inputs logic is around row 24-29
+        int_header = _find_row_by_label(ws, ["Interest Inputs"])
+        if int_header:
+            for r in range(int_header, min(int_header + 10, ws.max_row)):
+                v11 = str(ws.cell(row=r, column=11).value or "").lower()
+                v25 = str(ws.cell(row=r, column=25).value or "").lower()
+                v26 = str(ws.cell(row=r, column=26).value or "").lower()
+                if name_lower in v11 or name_lower in v25 or name_lower in v26:
+                    if rate is not None:
+                        rate_dec = float(rate) / 100.0 if float(rate) > 1.0 else float(rate)
+                        ws.cell(row=r, column=28).value = rate_dec
+                        ws.cell(row=r, column=27).value = 0.0 # Clear spread
+                    break
+                    
+        # 3. Update Amortization block
+        amor_header = _find_row_by_label(ws, ["Amortization Inputs"])
+        if amor_header:
+            for r in range(amor_header, min(amor_header + 7, ws.max_row)):
+                v11 = str(ws.cell(row=r, column=11).value or "").lower()
+                v25 = str(ws.cell(row=r, column=25).value or "").lower()
+                v26 = str(ws.cell(row=r, column=26).value or "").lower()
+                if name_lower in v11 or name_lower in v25 or name_lower in v26:
+                    if amort is not None:
+                        ws.cell(row=r, column=27).value = float(amort)
+                    break
 
 
 def _clear_template_inputs(ws, year_blocks: List[Dict[str, Any]], row_map: Dict[str, Optional[int]]) -> None:
@@ -283,10 +652,12 @@ def _clear_template_inputs(ws, year_blocks: List[Dict[str, Any]], row_map: Dict[
     for r in range(start_row, end_row + 1):
         for c in cols:
             cell = ws.cell(row=r, column=c)
-            if cell.data_type == "f":
-                continue
             v = cell.value
             if v is None:
+                continue
+            # Overwrite formulas too — we will write real numbers
+            if isinstance(v, str) and v.startswith("="):
+                cell.value = None
                 continue
             if isinstance(v, (int, float)):
                 cell.value = None
@@ -302,24 +673,31 @@ def _clear_template_inputs(ws, year_blocks: List[Dict[str, Any]], row_map: Dict[
                     cell.value = None
 
 
+def _erase_excel_errors(ws) -> None:
+    """Sweep entire sheet and replace any formula-error cells with '-'."""
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+        for cell in row:
+            v = cell.value
+            if v is None:
+                continue
+            if isinstance(v, str):
+                s = v.strip()
+                # Replace Excel error strings
+                if s in {"#DIV/0!", "#N/A", "#REF!", "#VALUE!", "#NAME?", "#NULL!", "#NUM!"}:
+                    cell.value = "-"
+                    continue
+                # Replace hanging formulas that survived
+                if s.startswith("="):
+                    cell.value = "-"
+                    continue
+                # Replace #### (column-too-narrow marker stored as string)
+                if s.startswith("####"):
+                    cell.value = "-"
+
+
 def _pick_target_sheets(wb) -> list:
-    picked = []
-
-    for ws in wb.worksheets:
-        if getattr(getattr(ws, "sheet_view", None), "tabSelected", False):
-            picked.append(ws)
-            break
-
-    if not picked:
-        picked.append(wb.active)
-
-    for ws in wb.worksheets:
-        if ws in picked:
-            continue
-        if _sheet_contains_text(ws, "net revenue") and _sheet_contains_text(ws, "gross profit"):
-            picked.append(ws)
-
-    return picked
+    """Return all worksheets; the caller will skip those without year blocks."""
+    return [ws for ws in wb.worksheets]
 
 
 def _sheet_contains_text(ws, needle: str) -> bool:
@@ -338,10 +716,10 @@ def _detect_template_unit_scale(ws) -> float:
             v = cell.value
             if not isinstance(v, str):
                 continue
-            s = v.lower()
-            if "in thousands" in s or "usd in thousands" in s or "$ in thousands" in s:
+            s = v.lower().replace(" ", "")
+            if "inthousands" in s or "usdinthousands" in s or "$inthousands" in s or "$'000" in s or "$000s" in s:
                 return 1000.0
-            if "in millions" in s or "usd in millions" in s or "$ in millions" in s:
+            if "inmillions" in s or "usdinmillions" in s or "$inmillions" in s or "$'000,000" in s:
                 return 1_000_000.0
 
     dvs = getattr(ws, "data_validations", None)
@@ -351,15 +729,19 @@ def _detect_template_unit_scale(ws) -> float:
             prompt = getattr(dv, "prompt", None)
             if not isinstance(prompt, str):
                 continue
-            s = prompt.lower()
-            if "in thousands" in s or "usd in thousands" in s or "$ in thousands" in s:
+            s = prompt.lower().replace(" ", "")
+            if "inthousands" in s or "usdinthousands" in s or "$inthousands" in s or "$'000" in s or "$000s" in s:
                 return 1000.0
-            if "in millions" in s or "usd in millions" in s or "$ in millions" in s:
+            if "inmillions" in s or "usdinmillions" in s or "$inmillions" in s or "$'000,000" in s:
                 return 1_000_000.0
     return 1_000_000.0
 
 
 def _parse_year_header(value: Any) -> Tuple[Optional[int], Optional[str]]:
+    import datetime
+    if isinstance(value, datetime.datetime):
+        return value.year, "a"  # Treat historical dates natively as 'actual'
+        
     if not isinstance(value, str):
         return None, None
     s = value.strip()
@@ -436,6 +818,29 @@ def _detect_year_blocks(ws) -> List[Dict[str, Any]]:
         return blocks
 
     return []
+
+
+def _detect_all_atar_blocks(ws) -> List[Dict[str, Any]]:
+    atar_blocks = []
+    for r in range(1, min(ws.max_row, 200) + 1):
+        for c in range(1, min(ws.max_column, 200) + 1):
+            cell = ws.cell(row=r, column=c)
+            v = cell.value
+            if isinstance(v, str) and v.strip().lower() == "atar projections":
+                start_col = c
+                end_col = c
+                for merged in ws.merged_cells.ranges:
+                    if merged.min_row <= r <= merged.max_row and merged.min_col <= c <= merged.max_col:
+                        start_col = merged.min_col
+                        end_col = merged.max_col
+                        break
+                atar_blocks.append({
+                    "header_row": r + 1,
+                    "start_col": start_col,
+                    "end_col": end_col,
+                    "role": "projection"
+                })
+    return atar_blocks
 
 
 def _detect_year_blocks_by_anchor(ws, label: str, role: str) -> List[Dict[str, Any]]:
@@ -779,7 +1184,42 @@ def _collect_revenue_items(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def _rewrite_year_header_row(ws, block: Dict[str, Any], base_year: int) -> None:
+def _get_actual_years_from_data(data: Dict[str, Any], base_year: int) -> List[int]:
+    years = set()
+    items = []
+    
+    # Collect from multiple sources just in case
+    rev = data.get("revenue", {})
+    if isinstance(rev, dict):
+        items.extend(rev.get("history", []) if isinstance(rev.get("history"), list) else [])
+        if isinstance(rev.get("present"), dict) and rev.get("present"):
+            items.append(rev.get("present"))
+            
+    profit = data.get("profit_metrics", {})
+    if isinstance(profit, dict):
+        for metric_list in profit.values():
+            if isinstance(metric_list, list):
+                items.extend(metric_list)
+                
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        period = str(item.get("period", "")).strip().upper()
+        y = _parse_year(period)
+        if y is None:
+            continue
+            
+        suffix_indicators = ["B", "F", "E", "R", "M"]
+        if period.endswith("A"):
+            years.add(y)
+        elif not any(period.endswith(s) for s in suffix_indicators):
+            if y <= base_year:
+                years.add(y)
+                
+    return sorted(list(years))
+
+
+def _rewrite_year_header_row(ws, block: Dict[str, Any], base_year: int, actual_years: list = None) -> None:
     header_row = block.get("header_row")
     cols = block.get("cols")
     role = block.get("role")
@@ -792,8 +1232,17 @@ def _rewrite_year_header_row(ws, block: Dict[str, Any], base_year: int) -> None:
     if n <= 0:
         return
 
+    years = []
     if role == "actual":
-        years = list(range(base_year - (n - 1), base_year + 1))
+        if actual_years:
+            if len(actual_years) >= n:
+                years = actual_years[-n:]
+            else:
+                pad = n - len(actual_years)
+                first_actual = actual_years[0]
+                years = list(range(first_actual - pad, first_actual)) + actual_years
+        else:
+            years = list(range(base_year - (n - 1), base_year + 1))
     else:
         years = list(range(base_year + 1, base_year + n + 1))
 
@@ -818,13 +1267,14 @@ def _rewrite_year_header_row(ws, block: Dict[str, Any], base_year: int) -> None:
         cell.value = f"{years[idx]}{sep}{suffix}"
 
 
-def _find_row_by_label(ws, labels: Any) -> Optional[int]:
+def _find_row_by_label(ws, labels: Any, min_row: int = 1, max_row: Optional[int] = None) -> Optional[int]:
     if isinstance(labels, str):
         labels = [labels]
     
     normalized_labels = {str(l).strip().lower() for l in labels if l}
+    end = max_row if max_row is not None else min(ws.max_row, 400)
     
-    for r in range(1, min(ws.max_row, 400) + 1):
+    for r in range(min_row, end + 1):
         for c in range(1, min(ws.max_column, 60) + 1):
             v = ws.cell(row=r, column=c).value
             if isinstance(v, str):
@@ -835,28 +1285,50 @@ def _find_row_by_label(ws, labels: Any) -> Optional[int]:
 
 
 def _detect_row_map(ws) -> Dict[str, Optional[int]]:
+    # Sequential bounding to prevent hooking duplicate labels out of order
+    net_rev = _find_row_by_label(ws, ["Net Revenue", "Revenue", "Total Revenue", "Net Sales", "Sales"])
+    cogs = _find_row_by_label(ws, ["COGS", "Cost of Goods Sold", "Cost of Sales", "Direct Costs"], min_row=net_rev or 1)
+    gp = _find_row_by_label(ws, ["Gross Profit", "Gross Margin $", "Gross Income"], min_row=net_rev or 1)
+    opex = _find_row_by_label(ws, ["Operating Expense", "Operating Expenses", "OpEx", "SG&A", "Total Operating Expenses"], min_row=gp or 1)
+    ebitda = _find_row_by_label(ws, ["EBITDA", "Reported EBITDA", "Adjusted EBITDA (reported)", "Operating EBITDA"], min_row=opex or 1)
+    
+    adj_ebitda = _find_row_by_label(ws, ["PF Adj. EBITDA", "Adjusted EBITDA", "Adj. EBITDA"], min_row=ebitda or 1)
+    fcf = _find_row_by_label(ws, ["Free Cash Flow", "FCF", "Unlevered Free Cash Flow"], min_row=adj_ebitda or 1)
+    
     return {
-        "net_revenue": _find_row_by_label(ws, ["Net Revenue", "Revenue", "Total Revenue", "Net Sales", "Sales"]),
-        "cogs": _find_row_by_label(ws, ["COGS", "Cost of Goods Sold", "Cost of Sales", "Direct Costs"]),
-        "gross_profit": _find_row_by_label(ws, ["Gross Profit", "Gross Margin $", "Gross Income"]),
-        "gross_margin": _find_row_by_label(ws, ["% Margin", "Gross Margin %", "Gross Profit Margin"]),
-        "operating_expense": _find_row_by_label(ws, ["Operating Expense", "Operating Expenses", "OpEx", "SG&A", "Total Operating Expenses"]),
-        "ebitda": _find_row_by_label(ws, ["EBITDA", "Adjusted EBITDA (reported)", "Operating EBITDA"]),
-        "ebitda_margin": _find_second_percent_margin_row(ws, after_label="EBITDA"),
-        "pf_adjustments": _find_row_by_label(ws, ["PF Adjustments", "EBITDA Adjustments", "Adjustments"]),
-        "adj_ebitda": _find_row_by_label(ws, ["PF Adj. EBITDA", "Adjusted EBITDA", "Adj. EBITDA"]),
-        "adj_ebitda_margin": _find_second_percent_margin_row(ws, after_label="PF Adj. EBITDA"),
-        "capex": _find_row_by_label(ws, ["Capex", "Capital Expenditures", "Capital Expenditure", "Additions to PPE"]),
-        "change_in_wc": _find_row_by_label(ws, ["Change in WC", "Change in Working Capital", "Working Capital Change", "(Increase)/Decrease in WC"]),
-        "one_time_cost": _find_row_by_label(ws, ["1x Costs", "One-time Costs", "Non-recurring", "EBITDA Normalizations"]),
-        "free_cash_flow": _find_row_by_label(ws, ["Free Cash Flow", "FCF", "Unlevered Free Cash Flow"])
+        "net_revenue": net_rev,
+        "cogs": cogs,
+        "gross_profit": gp,
+        "gross_margin": _find_row_by_label(ws, ["% Margin", "Gross Margin %", "Gross Profit Margin"], min_row=gp or 1),
+        "operating_expense": opex,
+        "ebitda": ebitda,
+        "ebitda_margin": _find_second_percent_margin_row(ws, after_label=(ebitda or 1)) if ebitda else None,
+        "pf_adjustments": _find_row_by_label(ws, ["PF Adjustments", "EBITDA Adjustments", "Adjustments"], min_row=ebitda or 1),
+        "adj_ebitda": adj_ebitda,
+        "adj_ebitda_margin": _find_second_percent_margin_row(ws, after_label=(adj_ebitda or 1)) if adj_ebitda else None,
+        "capex": _find_row_by_label(ws, ["Capex", "Capital Expenditures", "Capital Expenditure", "Additions to PPE"], min_row=adj_ebitda or 1),
+        "change_in_wc": _find_row_by_label(ws, ["Change in WC", "Change in Working Capital", "Working Capital Change", "(Increase)/Decrease in WC"], min_row=adj_ebitda or 1),
+        "one_time_cost": _find_row_by_label(ws, ["1x Costs", "One-time Costs", "Non-recurring", "EBITDA Normalizations", "1x Costs"]),
+        "free_cash_flow": fcf,
+        # Debt service section
+        "interest": _find_row_by_label(ws, ["Interest", "Interest Expense", "Total Interest", "Interest Subtotal"], min_row=fcf or 1),
+        "amortization": _find_row_by_label(ws, ["Amortization", "Debt Amortization", "Principal Amortization", "Amortization Subtotal"], min_row=fcf or 1),
+        "total_debt_service": _find_row_by_label(ws, ["Total Debt Service", "Debt Service", "Total Debt Service Subtotal"], min_row=fcf or 1),
+        "fcf_after_debt": _find_row_by_label(ws, ["FCF After Debt Service", "FCF After Debt", "Cash After Debt Service"], min_row=fcf or 1),
+        "cash_avail_revolver": _find_row_by_label(ws, ["Cash Available for Revolver", "Cash Available", "Cash Available Revolver"], min_row=fcf or 1),
+        "revolver_draw": _find_row_by_label(ws, ["Revolver Draw", "Revolver Draw / Repayment", "Revolver Drawing"], min_row=fcf or 1),
+        "revolver_balance": _find_row_by_label(ws, ["Revolver Balance", "Revolver Outstanding", "Revolver Ending Balance"], min_row=fcf or 1),
+        "remaining_cash": _find_row_by_label(ws, ["Remaining Cash", "Net Cash", "Cash After Revolver"], min_row=fcf or 1),
     }
 
 
-def _find_second_percent_margin_row(ws, after_label: str) -> Optional[int]:
-    start = _find_row_by_label(ws, after_label)
-    if not start:
-        return None
+def _find_second_percent_margin_row(ws, after_label: Any) -> Optional[int]:
+    if isinstance(after_label, int):
+        start = after_label
+    else:
+        start = _find_row_by_label(ws, after_label)
+        if not start:
+            return None
     
     target_labels = {"% margin", "margin %", "gross margin %", "ebitda margin %", "margin"}
     
@@ -1044,6 +1516,8 @@ def _fill_future_projections(
     base_year: int,
     revenue: Dict[int, float],
     gross_profit: Dict[int, float],
+    operating_income: Dict[int, float],
+    opex: Dict[int, float],
     ebitda: Dict[int, float],
     mode: str = "atar"
 ) -> None:
@@ -1111,17 +1585,20 @@ def _fill_future_projections(
     current_val = last_rev_val
     # Initialize current_val correctly for the loop if we have gaps
     
+    # Fill gap years up to target_years if any
+    gap_years = range(last_rev_y + 1, target_years[0]) if target_years and last_rev_y else []
+    for y in gap_years:
+        if y not in revenue:
+            new_val = current_val * (1 + cagr)
+            revenue[y] = new_val
+            current_val = new_val
+    
     for y in target_years:
         if y in revenue:
             current_val = revenue[y]
         else:
-            # If previous year was missing, we need to base it on something.
-            # Ideally base on the previous year's calculated value.
-            # But if y-1 is not in revenue (and we are filling sequentially), it should be fine.
-            # Let's verify sequential filling:
             prev_val = revenue.get(y - 1)
             if prev_val is None:
-                 # If immediate previous is missing (e.g. base_year was missing?), fallback
                  prev_val = current_val 
             
             if prev_val is not None and prev_val != 0:
@@ -1158,34 +1635,43 @@ def _fill_future_projections(
         if rev is not None:
             gross_profit[y] = rev * avg_gm
 
-    # --- 3. Extend EBITDA ---
-    known_ebitda_years = sorted([y for y in ebitda.keys() if y <= base_year])
+    # --- 3. Extend OpEx ---
+    known_opex_years = sorted([y for y in opex.keys() if y <= base_year])
+    avg_opex_margin = 0.25 # Default 25% of revenue
+    opex_margins = []
     
-    avg_em = 0.15 # Default
-    margins = []
-    
-    if known_ebitda_years:
-        recent_years = known_ebitda_years[-3:]
+    if known_opex_years:
+        recent_years = known_opex_years[-3:]
         for y in recent_years:
             r = revenue.get(y)
-            e = ebitda.get(y)
-            if r and e and r != 0:
-                margins.append(e / r)
+            o = opex.get(y)
+            if r and o and r != 0:
+                opex_margins.append(abs(o) / r)
                 
-        if margins:
-             if mode == "management":
-                # Optimistic
-                avg_em = max(margins) + 0.02 # Add 2% margin expansion
-             else:
-                # Conservative
-                avg_em = sum(margins) / len(margins)
-            
+        if opex_margins:
+            if mode == "management":
+                avg_opex_margin = sum(opex_margins) / len(opex_margins) * 0.9 # Optimization
+            else:
+                avg_opex_margin = sum(opex_margins) / len(opex_margins)
+                
     for y in target_years:
-        if y in ebitda:
+        if y in opex:
             continue
         rev = revenue.get(y)
         if rev is not None:
-            ebitda[y] = rev * avg_em
+            opex[y] = rev * avg_opex_margin
+
+    # --- 4. Extend EBITDA ---
+    # According to new rule: For each projection year, EBITDA = Revenue - COGS - Opex
+    # And Revenue - COGS = Gross Profit. So EBITDA = Gross Profit - Opex.
+    for y in target_years:
+        if y in ebitda:
+            continue
+        g = gross_profit.get(y)
+        o = opex.get(y)
+        if g is not None and o is not None:
+            # We must subtract absolute OpEx, since OpEx might be stored as positive naturally
+            ebitda[y] = g - abs(o)
 
 
 def _extract_series_by_year(items: Any, template_scale: float) -> Dict[int, float]:
@@ -1311,23 +1797,17 @@ def _parse_year(period: Any) -> Optional[int]:
         return None
     s = str(period).strip().upper()
     
-    # Try 4-digit year first
-    # Use raw string r"" for regex
-    m = re.search(r"\b(20\d{2})\b", s)
+    # Try 4-digit year first (with optional FY/CY prefix and optional suffixes)
+    m = re.search(r"(?:FY|CY)?\s*(20\d{2})", s)
     if m:
         return int(m.group(1))
 
-    # Try 20xx Suffix (e.g. 2026E)
-    m = re.search(r"\b(20\d{2})\s*([AEPFMB])\b", s)
-    if m:
-        return int(m.group(1))
-        
-    # Try FYXX or similar (e.g. FY26, FY26B)
-    m = re.search(r"FY\s*(\d{2})", s)
+    # Try 2-digit year with prefix (e.g. FY26)
+    m = re.search(r"(?:FY|CY)\s*(\d{2})", s)
     if m:
         return 2000 + int(m.group(1))
         
-    # Try '23E', '24A' etc.
+    # Try 2-digit year with suffix (e.g. 23E, 24A)
     m = re.search(r"\b(\d{2})\s*[AEPFMB]\b", s)
     if m:
         return 2000 + int(m.group(1))
@@ -1361,30 +1841,41 @@ def _derive_adj_ebitda(ebitda: Dict[int, float], adjustments: Dict[int, float]) 
     return out
 
 
-def _write_line(ws, row: Optional[int], year_cols: Dict[int, int], values: Dict[int, float], force_negative: bool = False) -> None:
+def _write_line(
+    ws, 
+    row: Optional[int], 
+    year_cols: Dict[int, int], 
+    values: Dict[int, float], 
+    force_negative: bool = False, 
+    is_ebitda: bool = False,
+    template_scale: Optional[float] = None
+) -> None:
     if not row or not values:
         return
     for year, col in year_cols.items():
         if year not in values:
             continue
         cell = ws.cell(row=row, column=col)
-        
-        # Check if cell is a formula
-        # is_formula = False
-        # if cell.data_type == "f":
-        #     is_formula = True
-        # elif isinstance(cell.value, str) and cell.value.startswith("="):
-        #     is_formula = True
-            
-        # if is_formula:
-        #     print(f"DEBUG: Skipping formula cell at {cell.coordinate} (Row {row}, Col {col})")
-        #     continue
             
         v = float(values[year])
-        if force_negative:
-            v = -abs(v)
+        
+        # Format the specific value but DO NOT wrap it in brackets yourself
+        # just force mathematically negative, and let the excel format string handle UI.
+        if force_negative and v > 0:
+            v = -v
+            
         cell.value = v
-        # print(f"DEBUG: Wrote {v} to {cell.coordinate}")
+        
+        if template_scale is not None:
+            if template_scale >= 1_000_000.0:
+                fmt = '"$"#,##0.0"M";[Red]("$"#,##0.0"M")'
+            elif template_scale >= 1_000.0:
+                fmt = '"$"#,##0.0,"M";[Red]("$"#,##0.0,"M")'
+            else:
+                fmt = '"$"#,##0.0,,"M";[Red]("$"#,##0.0,,"M")'
+            cell.number_format = fmt
+        elif is_ebitda:
+            cell.number_format = '"$"#,##0.0;[Red]("$"#,##0.0)'
 
 
 def _write_percent_line(
@@ -1407,3 +1898,66 @@ def _write_percent_line(
             cell.value = ratio
         else:
             cell.value = ratio * 100.0
+
+
+def _fuzzy_find_row_by_label(ws, target_name: str, min_row: int = 1, max_row: Optional[int] = None) -> Optional[int]:
+    import difflib
+    target = target_name.lower().strip()
+    if not target: return None
+    end = max_row if max_row is not None else min(ws.max_row, 400)
+    best_match = None
+    best_score = 0.8  # Threshold for fuzzy match
+
+    for r in range(min_row, end + 1):
+        for c in range(1, min(ws.max_column, 20) + 1):
+            v = ws.cell(row=r, column=c).value
+            if isinstance(v, str):
+                s = v.strip().lower()
+                if not s: continue
+                # Exact or substring match highly prioritized
+                if target == s:
+                    return r
+                if target in s:
+                    # e.g., "accounts receivable" in "accounts receivable, net"
+                    return r
+                # Fuzzy fallback
+                ratio = difflib.SequenceMatcher(None, target, s).ratio()
+                if ratio > best_score:
+                    best_score = ratio
+                    best_match = r
+                    
+    return best_match
+
+
+def _write_balance_sheet_to_excel(ws, year_blocks: List[Dict[str, Any]], bs_data: Dict[str, Any], template_scale: float) -> None:
+    if not isinstance(bs_data, dict):
+        return
+        
+    actual_year_cols = {}
+    for block in year_blocks:
+        role = block.get("role", "projection")
+        if role == "actual" or role == "projection":
+            yc = block.get("year_cols", {})
+            actual_year_cols.update(yc)
+            
+    if not actual_year_cols:
+        return
+        
+    for section in ["assets", "liabilities", "equity"]:
+        items = bs_data.get(section, [])
+        if not isinstance(items, list):
+            continue
+            
+        for item in items:
+            name = item.get("item_name")
+            values_list = item.get("values", [])
+            if not name or not isinstance(values_list, list):
+                continue
+                
+            row = _fuzzy_find_row_by_label(ws, name)
+            if not row:
+                continue
+                
+            # Treat array of period/values like extracted array
+            series = _extract_series_by_year(values_list, template_scale)
+            _write_line(ws, row, actual_year_cols, series, force_negative=False, template_scale=template_scale)

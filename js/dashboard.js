@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
     authForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const email = emailInput.value;
-        
+
         // Mock Login
         state.isAuthenticated = true;
         state.user = {
@@ -93,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
-            
+
             // Update Active State
             navItems.forEach(nav => nav.classList.remove('active'));
             item.classList.add('active');
@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderView(viewName) {
         state.currentView = viewName;
-        
+
         // Update Header
         const titles = {
             'dashboard': 'Dashboard',
@@ -121,30 +121,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Render Content
         let html = '';
-        switch(viewName) {
+        switch (viewName) {
             case 'dashboard':
                 html = `
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
-                        <div class="card">
-                            <h3>Active Deals</h3>
-                            <div style="height: 100px; display: flex; align-items: center; justify-content: center; color: #94a3b8;">
-                                No active deals
-                            </div>
-                        </div>
-                        <div class="card">
-                            <h3>Recent Activity</h3>
-                            <div style="height: 100px; display: flex; align-items: center; justify-content: center; color: #94a3b8;">
-                                No recent activity
-                            </div>
-                        </div>
-                        <div class="card">
-                            <h3>System Status</h3>
-                            <div style="height: 100px; display: flex; align-items: center; justify-content: center; color: #10b981;">
-                                <i class="fas fa-check-circle" style="margin-right: 8px;"></i> All systems operational
-                            </div>
+                    <div id="dashboard-content-container">
+                        <div style="padding: 3rem; text-align: center; color: #94a3b8;">
+                            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                            <p>Loading command center...</p>
                         </div>
                     </div>
                 `;
+                // Load dynamic dashboard data right after rendering HTML
+                setTimeout(() => loadDashboardData(), 0);
                 break;
             case 'upload':
                 html = `
@@ -218,12 +206,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="card">
                             <div class="empty-state" style="padding: 4rem;">
                                 <div style="text-align: center;">
-                                    ${state.currentDealId ? 
-                                        `<i class="fas fa-spinner fa-spin" style="font-size: 3rem; color: var(--secondary-color); margin-bottom: 1rem;"></i>
-                                         <p>Loading analysis data...</p>` : 
-                                        `<i class="fas fa-chart-line" style="font-size: 3rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                                    ${state.currentDealId ?
+                        `<i class="fas fa-spinner fa-spin" style="font-size: 3rem; color: var(--secondary-color); margin-bottom: 1rem;"></i>
+                                         <p>Loading analysis data...</p>` :
+                        `<i class="fas fa-chart-line" style="font-size: 3rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
                                          <p>Select a deal to view detailed analysis</p>`
-                                    }
+                    }
                                 </div>
                             </div>
                         </div>
@@ -255,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function renderProfitRow(label, data, isRevenue = false, symbol = '') {
             let content = '';
-            
+
             // Helper to ensure symbol is displayed
             const formatValue = (val) => {
                 if (!val || val === '-') return '-';
@@ -265,10 +253,10 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             const appendMillions = (val) => {
-                 if (!val || val.toString().toLowerCase().includes('million')) return val;
-                 return `${val} Million`;
+                if (!val || val.toString().toLowerCase().includes('million')) return val;
+                return `${val} Million`;
             };
-            
+
             if (isRevenue && data) {
                 // Handle single revenue object
                 const val = formatValue(data.value);
@@ -306,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function renderMarginCard(label, data, color) {
             if (!Array.isArray(data) || data.length === 0) return '';
-            
+
             const latest = data[0];
             const value = latest.value;
             if (!value) return '';
@@ -335,10 +323,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function renderAnalysisDashboard(data) {
             const container = document.getElementById('analysis-content');
-            
+
             // Helper to format numbers safely
             const fmt = (val) => val !== undefined && val !== null ? val : 'N/A';
-            
+
             // Helper to get currency symbol
             const getCurrencySymbol = (code) => {
                 if (!code) return '';
@@ -351,7 +339,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const currencyCode = data.header.currency || 'USD';
             const currencySymbol = getCurrencySymbol(currencyCode);
-            
+
             let html = `
                 <div style="display: flex; flex-direction: column; gap: 1.5rem;">
                     
@@ -505,10 +493,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                 
                                 <div style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
                                     ${(() => {
-                                        const adjEbitda = data.profitMetrics?.adjusted_ebitda || [];
-                                        
-                                        if (Array.isArray(adjEbitda) && adjEbitda.length > 0) {
-                                            const rows = adjEbitda.map(item => `
+                    const adjEbitda = data.profitMetrics?.adjusted_ebitda || [];
+
+                    if (Array.isArray(adjEbitda) && adjEbitda.length > 0) {
+                        const rows = adjEbitda.map(item => `
                                                 <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
                                                     <span style="font-weight: 500; color: var(--text-secondary);">${item.period || 'N/A'}</span>
                                                     <div style="text-align: right;">
@@ -516,16 +504,16 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     </div>
                                                 </div>
                                             `).join('');
-                                            
-                                            return `
+
+                        return `
                                                 <div style="display: flex; flex-direction: column;">
                                                     ${rows}
                                                 </div>
                                             `;
-                                        } else {
-                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
-                                        }
-                                    })()}
+                    } else {
+                        return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                    }
+                })()}
                                 </div>
 
                                 <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem;">
@@ -534,20 +522,20 @@ document.addEventListener('DOMContentLoaded', () => {
                                 
                                 <div style="margin-top: 0.5rem;">
                                     ${(() => {
-                                        const capex = data.tale_of_the_tape?.capex || {};
-                                        const yearWise = capex.year_wise || {};
-                                        
-                                        // If we have year-wise data
-                                        if (yearWise && Object.keys(yearWise).length > 0) {
-                                            const rows = Object.entries(yearWise).map(([year, val]) => {
-                                                // Handle both string values and object values {value, source}
-                                                const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
-                                                let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (capex.source || 'not_found');
-                                                
-                                                if (sourceVal === 'derived_from_fcf') sourceVal = 'derived from FCF';
-                                                if (sourceVal === 'calculated') sourceVal = 'calculated';
-                                                
-                                                return `
+                    const capex = data.tale_of_the_tape?.capex || {};
+                    const yearWise = capex.year_wise || {};
+
+                    // If we have year-wise data
+                    if (yearWise && Object.keys(yearWise).length > 0) {
+                        const rows = Object.entries(yearWise).map(([year, val]) => {
+                            // Handle both string values and object values {value, source}
+                            const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
+                            let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (capex.source || 'not_found');
+
+                            if (sourceVal === 'derived_from_fcf') sourceVal = 'derived from FCF';
+                            if (sourceVal === 'calculated') sourceVal = 'calculated';
+
+                            return `
                                                 <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
                                                     <span style="font-weight: 500; color: var(--text-secondary);">${year}</span>
                                                     <div style="text-align: right;">
@@ -556,25 +544,25 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     </div>
                                                 </div>
                                             `}).join('');
-                                            
-                                            return `
+
+                        return `
                                                 <div style="display: flex; flex-direction: column;">
                                                     ${rows}
                                                 </div>
                                             `;
-                                        } 
-                                        // Fallback for backward compatibility or single value
-                                        else if (capex.value) {
-                                            return `
+                    }
+                    // Fallback for backward compatibility or single value
+                    else if (capex.value) {
+                        return `
                                                 <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">
                                                     ${fmt(capex.value)}
                                                 </div>
                                             `;
-                                        }
-                                        else {
-                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
-                                        }
-                                    })()}
+                    }
+                    else {
+                        return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                    }
+                })()}
                                 </div>
 
                                 <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.5rem; margin-bottom: 1.5rem;">
@@ -588,17 +576,17 @@ document.addEventListener('DOMContentLoaded', () => {
                                 
                                 <div style="margin-top: 0.5rem;">
                                     ${(() => {
-                                        const wc = data.tale_of_the_tape?.change_in_working_capital || {};
-                                        const yearWise = wc.year_wise || {};
-                                        
-                                        if (yearWise && Object.keys(yearWise).length > 0) {
-                                            const rows = Object.entries(yearWise).map(([year, val]) => {
-                                                const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
-                                                let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (wc.source || 'not_found');
-                                                if (sourceVal === 'calculated_from_nwc') sourceVal = 'calculated from NWC';
-                                                if (sourceVal === 'calculated_from_components') sourceVal = 'calculated from CA-CL';
-                                                
-                                                return `
+                    const wc = data.tale_of_the_tape?.change_in_working_capital || {};
+                    const yearWise = wc.year_wise || {};
+
+                    if (yearWise && Object.keys(yearWise).length > 0) {
+                        const rows = Object.entries(yearWise).map(([year, val]) => {
+                            const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
+                            let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (wc.source || 'not_found');
+                            if (sourceVal === 'calculated_from_nwc') sourceVal = 'calculated from NWC';
+                            if (sourceVal === 'calculated_from_components') sourceVal = 'calculated from CA-CL';
+
+                            return `
                                                 <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
                                                     <span style="font-weight: 500; color: var(--text-secondary);">${year}</span>
                                                     <div style="text-align: right;">
@@ -607,16 +595,16 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     </div>
                                                 </div>
                                             `}).join('');
-                                            
-                                            return `
+
+                        return `
                                                 <div style="display: flex; flex-direction: column;">
                                                     ${rows}
                                                 </div>
                                             `;
-                                        } else {
-                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
-                                        }
-                                    })()}
+                    } else {
+                        return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                    }
+                })()}
                                 </div>
 
                                 <!-- 1x Cost -->
@@ -629,16 +617,16 @@ document.addEventListener('DOMContentLoaded', () => {
                                 
                                 <div style="margin-top: 0.5rem;">
                                     ${(() => {
-                                        const oneTime = data.tale_of_the_tape?.one_time_cost || {};
-                                        const yearWise = oneTime.year_wise || {};
-                                        
-                                        if (yearWise && Object.keys(yearWise).length > 0) {
-                                            const rows = Object.entries(yearWise).map(([year, val]) => {
-                                                const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
-                                                let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (oneTime.source || 'not_found');
-                                                if (sourceVal === 'calculated_from_bridge') sourceVal = 'calculated from bridge';
-                                                
-                                                return `
+                    const oneTime = data.tale_of_the_tape?.one_time_cost || {};
+                    const yearWise = oneTime.year_wise || {};
+
+                    if (yearWise && Object.keys(yearWise).length > 0) {
+                        const rows = Object.entries(yearWise).map(([year, val]) => {
+                            const displayVal = typeof val === 'object' && val !== null ? (val.value || '-') : val;
+                            let sourceVal = typeof val === 'object' && val !== null ? (val.source || 'not_found') : (oneTime.source || 'not_found');
+                            if (sourceVal === 'calculated_from_bridge') sourceVal = 'calculated from bridge';
+
+                            return `
                                                 <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0;">
                                                     <span style="font-weight: 500; color: var(--text-secondary);">${year}</span>
                                                     <div style="text-align: right;">
@@ -647,16 +635,16 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     </div>
                                                 </div>
                                             `}).join('');
-                                            
-                                            return `
+
+                        return `
                                                 <div style="display: flex; flex-direction: column;">
                                                     ${rows}
                                                 </div>
                                             `;
-                                        } else {
-                                            return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
-                                        }
-                                    })()}
+                    } else {
+                        return `<div style="font-style: italic; color: #94a3b8;">Not available</div>`;
+                    }
+                })()}
                                 </div>
                             </div>
                         </div>
@@ -741,25 +729,25 @@ document.addEventListener('DOMContentLoaded', () => {
                         
                         <div style="overflow-x: auto;">
                             ${(() => {
-                                const fcf = data.free_cash_flow || {};
-                                const historical = (fcf && typeof fcf === 'object') ? (fcf.historical || fcf.year_wise || {}) : {};
-                                const forecast = (fcf && typeof fcf === 'object') ? (fcf.forecast_next_5_years || {}) : {};
-                                
-                                const hasHistorical = historical && typeof historical === 'object' && Object.keys(historical).length > 0;
-                                const hasForecast = forecast && typeof forecast === 'object' && Object.keys(forecast).length > 0;
+                    const fcf = data.free_cash_flow || {};
+                    const historical = (fcf && typeof fcf === 'object') ? (fcf.historical || fcf.year_wise || {}) : {};
+                    const forecast = (fcf && typeof fcf === 'object') ? (fcf.forecast_next_5_years || {}) : {};
 
-                                const reservedForecastKeys = new Set(['base_year', 'growth_rate_used', 'methodology']);
-                                const forecastYears = hasForecast
-                                    ? Object.keys(forecast).filter(k => !reservedForecastKeys.has(k)).sort()
-                                    : [];
+                    const hasHistorical = historical && typeof historical === 'object' && Object.keys(historical).length > 0;
+                    const hasForecast = forecast && typeof forecast === 'object' && Object.keys(forecast).length > 0;
 
-                                if (!hasHistorical && !hasForecast) {
-                                    return `<div style="font-style: italic; color: #94a3b8; padding: 1rem; text-align: center;">Free Cash Flow data not available</div>`;
-                                }
+                    const reservedForecastKeys = new Set(['base_year', 'growth_rate_used', 'methodology']);
+                    const forecastYears = hasForecast
+                        ? Object.keys(forecast).filter(k => !reservedForecastKeys.has(k)).sort()
+                        : [];
 
-                                const historicalTable = hasHistorical ? (() => {
-                                    const sortedYears = Object.keys(historical).sort();
-                                    return `
+                    if (!hasHistorical && !hasForecast) {
+                        return `<div style="font-style: italic; color: #94a3b8; padding: 1rem; text-align: center;">Free Cash Flow data not available</div>`;
+                    }
+
+                    const historicalTable = hasHistorical ? (() => {
+                        const sortedYears = Object.keys(historical).sort();
+                        return `
                                         <div style="margin-bottom: 1rem;">
                                             <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem;">Historical</div>
                                             <table style="width: 100%; border-collapse: collapse; min-width: 600px;">
@@ -775,38 +763,38 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     <tr>
                                                         <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: var(--primary-color);">Free Cash Flow</td>
                                                         ${sortedYears.map(year => {
-                                                            const item = historical[year];
-                                                            const val = typeof item === 'object' && item !== null ? (item.value || '-') : item;
-                                                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">${val}</td>`;
-                                                        }).join('')}
+                            const item = historical[year];
+                            const val = typeof item === 'object' && item !== null ? (item.value || '-') : item;
+                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">${val}</td>`;
+                        }).join('')}
                                                     </tr>
                                                     <tr>
                                                         <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; color: var(--text-secondary); font-size: 0.85rem;">Source</td>
                                                         ${sortedYears.map(year => {
-                                                            const item = historical[year];
-                                                            const source = typeof item === 'object' && item !== null ? (item.source || '-') : 'not_found';
-                                                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-size: 0.8rem; color: #64748b;">${source}</td>`;
-                                                        }).join('')}
+                            const item = historical[year];
+                            const source = typeof item === 'object' && item !== null ? (item.source || '-') : 'not_found';
+                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-size: 0.8rem; color: #64748b;">${source}</td>`;
+                        }).join('')}
                                                     </tr>
                                                     <tr>
                                                         <td style="padding: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">Method</td>
                                                         ${sortedYears.map(year => {
-                                                            const item = historical[year];
-                                                            const method = typeof item === 'object' && item !== null ? (item.method || '-') : '-';
-                                                            return `<td style="padding: 0.75rem; text-align: right; font-size: 0.8rem; color: #94a3b8; font-style: italic;">${method}</td>`;
-                                                        }).join('')}
+                            const item = historical[year];
+                            const method = typeof item === 'object' && item !== null ? (item.method || '-') : '-';
+                            return `<td style="padding: 0.75rem; text-align: right; font-size: 0.8rem; color: #94a3b8; font-style: italic;">${method}</td>`;
+                        }).join('')}
                                                     </tr>
                                                 </tbody>
                                             </table>
                                         </div>
                                     `;
-                                })() : '';
+                    })() : '';
 
-                                const forecastTable = forecastYears.length > 0 ? (() => {
-                                    const baseYear = forecast.base_year || '';
-                                    const growthRate = forecast.growth_rate_used || '';
-                                    const methodology = forecast.methodology || '-';
-                                    return `
+                    const forecastTable = forecastYears.length > 0 ? (() => {
+                        const baseYear = forecast.base_year || '';
+                        const growthRate = forecast.growth_rate_used || '';
+                        const methodology = forecast.methodology || '-';
+                        return `
                                         <div>
                                             <div style="font-size: 0.9rem; font-weight: 600; color: var(--primary-color); margin-bottom: 0.5rem;">Forecast (Next 5 Years)</div>
                                             <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">
@@ -827,20 +815,20 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     <tr>
                                                         <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: var(--primary-color);">Projected FCF</td>
                                                         ${forecastYears.map(year => {
-                                                            const val = forecast[year];
-                                                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">${val || '-'}</td>`;
-                                                        }).join('')}
+                            const val = forecast[year];
+                            return `<td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">${val || '-'}</td>`;
+                        }).join('')}
                                                     </tr>
                                                 </tbody>
                                             </table>
                                         </div>
                                     `;
-                                })() : (hasForecast ? `
+                    })() : (hasForecast ? `
                                     <div style="font-style: italic; color: #94a3b8; padding: 0.5rem 0; text-align: center;">Forecast data not available</div>
                                 ` : '');
 
-                                return `${historicalTable}${forecastTable}`;
-                            })()}
+                    return `${historicalTable}${forecastTable}`;
+                })()}
                         </div>
                     </div>
 
@@ -870,7 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
             `;
-            
+
             container.innerHTML = html;
 
             // Attach event listener for Generate Report
@@ -886,24 +874,24 @@ document.addEventListener('DOMContentLoaded', () => {
         async function handleGenerateReport(dealId) {
             const btn = document.getElementById('generate-report-btn');
             const originalContent = btn.innerHTML;
-            
+
             // Loading State
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating Excel...';
-            
+
             try {
                 const response = await fetch(`${API_URL}/reports/generate-excel/${dealId}`, {
                     method: 'POST'
                 });
                 const result = await response.json();
-                
+
                 if (result.success) {
                     // Trigger Download
                     window.location.href = `${API_URL}/reports/download/${result.filename}`;
-                    
+
                     // Update History
                     await loadDealReportHistory(dealId);
-                    
+
                 } else {
                     alert('Failed to generate report: ' + result.message);
                 }
@@ -920,11 +908,11 @@ document.addEventListener('DOMContentLoaded', () => {
         async function loadDealReportHistory(dealId) {
             const container = document.getElementById('deal-report-history');
             if (!container) return;
-            
+
             try {
                 const response = await fetch(`${API_URL}/reports/history/${dealId}`);
                 const result = await response.json();
-                
+
                 if (result.success && result.history && result.history.length > 0) {
                     container.innerHTML = `
                         <div style="display: flex; flex-direction: column; gap: 0.75rem;">
@@ -999,7 +987,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.preventDefault();
                 dropZone.style.background = '#f8fafc';
                 dropZone.style.borderColor = 'var(--border-color)';
-                
+
                 if (e.dataTransfer.files.length > 0) {
                     handleFileSelection(e.dataTransfer.files[0]);
                 }
@@ -1063,14 +1051,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
 
                     const result = await response.json();
-                    
+
                     if (result.success) {
                         statusText.textContent = 'Upload complete! OCR processing finished.';
                         statusText.style.color = '#10b981';
-                        
+
                         // Store deal ID and redirect to analysis
                         state.currentDealId = result.dealId;
-                        
+
                         setTimeout(() => {
                             alert('Document uploaded and processed successfully! Redirecting to analysis...');
                             document.querySelector('[data-view="analysis"]').click();
@@ -1138,20 +1126,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Global helper for deal click
         window.loadDealAnalysis = (dealId) => {
-             state.currentDealId = dealId;
-             document.querySelector('[data-view="analysis"]').click();
+            state.currentDealId = dealId;
+            document.querySelector('[data-view="analysis"]').click();
         };
 
         if (viewName === 'analysis') {
-             loadDealsForSelector();
-             if (state.currentDealId) {
-                 loadAnalysisData(state.currentDealId);
-             }
+            loadDealsForSelector();
+            if (state.currentDealId) {
+                loadAnalysisData(state.currentDealId);
+            }
         }
 
         if (viewName === 'reports') {
             loadReports();
-            
+
             // Attach refresh listener
             const refreshBtn = document.getElementById('refresh-reports');
             if (refreshBtn) {
@@ -1162,17 +1150,17 @@ document.addEventListener('DOMContentLoaded', () => {
         async function loadReports() {
             const container = document.getElementById('reports-list-container');
             if (!container) return;
-            
+
             try {
                 container.innerHTML = `
                     <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
                         <i class="fas fa-spinner fa-spin"></i> Loading reports...
                     </div>
                 `;
-                
+
                 const response = await fetch(`${API_URL}/reports`);
                 const result = await response.json();
-                
+
                 if (result.success && result.reports && result.reports.length > 0) {
                     container.innerHTML = `
                         <div style="display: flex; flex-direction: column; gap: 1rem;">
@@ -1225,10 +1213,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (result.success && result.deals) {
                     badge.textContent = `${result.deals.length} Deals Uploaded`;
-                    
-                    selector.innerHTML = '<option value="">-- Select a Deal --</option>' + 
+
+                    selector.innerHTML = '<option value="">-- Select a Deal --</option>' +
                         result.deals.map(deal => `<option value="${deal.id}" ${state.currentDealId === deal.id ? 'selected' : ''}>${deal.name}</option>`).join('');
-                    
+
                     selector.addEventListener('change', (e) => {
                         const dealId = e.target.value;
                         if (dealId) {
@@ -1286,5 +1274,191 @@ document.addEventListener('DOMContentLoaded', () => {
                 `;
             }
         }
+        async function loadDashboardData() {
+            const container = document.getElementById('dashboard-content-container');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`${API_URL}/deals`);
+                const result = await response.json();
+
+                if (result.success && result.deals) {
+                    const deals = result.deals;
+                    const totalDeals = deals.length;
+
+                    // Calculate pipeline value and normalize to Millions
+                    let pipelineValue = 0;
+                    deals.forEach(deal => {
+                        if (deal.value && deal.value !== 'N/A') {
+                            const valStr = deal.value.toString().toUpperCase();
+                            const numStr = valStr.replace(/[^0-9.]/g, '');
+                            if (numStr) {
+                                let num = parseFloat(numStr);
+                                // If the value was marked in Billions
+                                if (valStr.includes('B')) {
+                                    num *= 1000;
+                                }
+                                // If it's a raw unformatted massive number, assume it's actual dollars and convert to M
+                                else if (!valStr.includes('M') && num > 100000) {
+                                    num /= 1000000;
+                                }
+                                pipelineValue += num;
+                            }
+                        }
+                    });
+
+                    let displayPipelineValue = pipelineValue >= 1000
+                        ? '$' + (pipelineValue / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'B+'
+                        : '$' + pipelineValue.toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'M+';
+
+                    // Sort deals by date (newest first)
+                    const sortedDeals = [...deals].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    const recentDeals = sortedDeals.slice(0, 5);
+
+                    container.innerHTML = `
+                        <!-- KPI Cards Row -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+                            <!-- Total Deals -->
+                            <div class="card" style="border-left: 4px solid var(--primary-color); display: flex; align-items: center; justify-content: space-between; overflow: hidden; padding: 1.25rem;">
+                                <div style="overflow: hidden;">
+                                    <h4 style="margin: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Deals Analyzed</h4>
+                                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-top: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${totalDeals}</div>
+                                </div>
+                                <div style="min-width: 48px; width: 48px; height: 48px; border-radius: 50%; background: #e0f2fe; color: var(--primary-color); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-left: 0.5rem;">
+                                    <i class="fas fa-folder-open"></i>
+                                </div>
+                            </div>
+                            
+                            <!-- Pipeline Value -->
+                            <div class="card" style="border-left: 4px solid var(--success-color); display: flex; align-items: center; justify-content: space-between; overflow: hidden; padding: 1.25rem;">
+                                <div style="overflow: hidden;">
+                                    <h4 style="margin: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Pipeline Value</h4>
+                                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-top: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${displayPipelineValue}">${displayPipelineValue}</div>
+                                </div>
+                                <div style="min-width: 48px; width: 48px; height: 48px; border-radius: 50%; background: #dcfce7; color: var(--success-color); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-left: 0.5rem;">
+                                    <i class="fas fa-chart-line"></i>
+                                </div>
+                            </div>
+
+                            <!-- Average Extraction Time -->
+                            <div class="card" style="border-left: 4px solid var(--warning-color); display: flex; align-items: center; justify-content: space-between; overflow: hidden; padding: 1.25rem;">
+                                <div style="overflow: hidden;">
+                                    <h4 style="margin: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Avg Extract Time</h4>
+                                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-top: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">~1 min</div>
+                                </div>
+                                <div style="min-width: 48px; width: 48px; height: 48px; border-radius: 50%; background: #fef3c7; color: var(--warning-color); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-left: 0.5rem;">
+                                    <i class="fas fa-clock"></i>
+                                </div>
+                            </div>
+
+                            <!-- Engine Status -->
+                            <div class="card" style="border-left: 4px solid #10b981; display: flex; align-items: center; justify-content: space-between; overflow: hidden; padding: 1.25rem;">
+                                <div style="overflow: hidden;">
+                                    <h4 style="margin: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Extraction Engine</h4>
+                                    <div style="font-size: 1.2rem; font-weight: 600; color: #10b981; margin-top: 0.5rem; display: flex; align-items: center; gap: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                        <span class="status-indicator active" style="min-width: 10px; height: 10px; background: #10b981; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #10b981;"></span> Online
+                                    </div>
+                                </div>
+                                <div style="min-width: 48px; width: 48px; height: 48px; border-radius: 50%; background: #d1fae5; color: #10b981; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-left: 0.5rem;">
+                                    <i class="fas fa-server"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Main Content Layout -->
+                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+                            
+                            <!-- Recent Deals Loop -->
+                            <div class="card" style="padding: 0; overflow: hidden;">
+                                <div style="padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                                    <h3 style="margin: 0;"><i class="fas fa-history" style="margin-right: 0.5rem; color: var(--primary-color);"></i> Recent Processing Activity</h3>
+                                </div>
+                                <div style="overflow-x: auto;">
+                                    <table style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr style="background: #f8fafc; text-align: left; color: var(--text-secondary); font-size: 0.85rem;">
+                                                <th style="padding: 1rem 1.5rem;">Deal Name</th>
+                                                <th style="padding: 1rem 1.5rem;">Date Added</th>
+                                                <th style="padding: 1rem 1.5rem;">Status</th>
+                                                <th style="padding: 1rem 1.5rem; text-align: right;">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${recentDeals.length > 0 ? recentDeals.map(deal => `
+                                                <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.2s; cursor: pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='transparent'" onclick="window.viewDealAnalysis('${deal.id}')">
+                                                    <td style="padding: 1rem 1.5rem; font-weight: 500; color: var(--primary-color);">
+                                                        ${deal.name}
+                                                    </td>
+                                                    <td style="padding: 1rem 1.5rem; color: var(--text-secondary); font-size: 0.875rem;">
+                                                        ${deal.date}
+                                                    </td>
+                                                    <td style="padding: 1rem 1.5rem;">
+                                                        <span class="badge" style="background: #dcfce7; color: #166534; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">Parsed</span>
+                                                    </td>
+                                                    <td style="padding: 1rem 1.5rem; text-align: right;">
+                                                        <span style="color: var(--secondary-color); font-size: 0.875rem; font-weight: 500;"><i class="fas fa-arrow-right"></i></span>
+                                                    </td>
+                                                </tr>
+                                            `).join('') : `
+                                                <tr>
+                                                    <td colspan="4" style="padding: 2rem; text-align: center; color: #94a3b8;">
+                                                        No recent deals found.
+                                                    </td>
+                                                </tr>
+                                            `}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Quick Actions Column -->
+                            <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+                                <div class="card" style="padding: 1.5rem;">
+                                    <h3 style="margin-top: 0; margin-bottom: 1rem;"><i class="fas fa-bolt" style="margin-right: 0.5rem; color: var(--secondary-color);"></i> Quick Actions</h3>
+                                    
+                                    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                                        <button onclick="document.querySelector('[data-view=\\'upload\\']').click()" style="width: 100%; border: 1px solid var(--border-color); background: #fff; padding: 1rem; border-radius: 8px; text-align: left; display: flex; align-items: center; gap: 1rem; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='var(--primary-color)'; this.style.color='var(--primary-color)'" onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='inherit'">
+                                            <div style="width: 32px; height: 32px; background: #f1f5f9; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--primary-color);">
+                                                <i class="fas fa-plus"></i>
+                                            </div>
+                                            <div style="font-weight: 500;">Upload New Document</div>
+                                        </button>
+
+                                        <button onclick="document.querySelector('[data-view=\\'active-deals\\']').click()" style="width: 100%; border: 1px solid var(--border-color); background: #fff; padding: 1rem; border-radius: 8px; text-align: left; display: flex; align-items: center; gap: 1rem; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='var(--primary-color)'; this.style.color='var(--primary-color)'" onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='inherit'">
+                                            <div style="width: 32px; height: 32px; background: #f1f5f9; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--primary-color);">
+                                                <i class="fas fa-list"></i>
+                                            </div>
+                                            <div style="font-weight: 500;">View Full Pipeline</div>
+                                        </button>
+                                        
+                                        <button style="width: 100%; border: 1px dashed var(--border-color); background: #fafafa; padding: 1rem; border-radius: 8px; text-align: left; display: flex; align-items: center; gap: 1rem; cursor: not-allowed; opacity: 0.7;">
+                                            <div style="width: 32px; height: 32px; background: #e2e8f0; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #64748b;">
+                                                <i class="fas fa-calculator"></i>
+                                            </div>
+                                            <div>
+                                                <div style="font-weight: 500; color: var(--text-secondary);">Generate Portfolio Math</div>
+                                                <div style="font-size: 0.75rem; color: #94a3b8;">Coming Soon</div>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    `;
+
+                } else {
+                    container.innerHTML = `<div class="empty-state"><p>Error loading dashboard data.</p></div>`;
+                }
+            } catch (err) {
+                console.error("Dashboard error:", err);
+                container.innerHTML = `<div class="empty-state"><p>Error fetching dashboard activity.</p></div>`;
+            }
+        }
+
+        window.viewDealAnalysis = (dealId) => {
+            state.currentDealId = dealId;
+            document.querySelector('[data-view="analysis"]').click();
+        };
     }
 });

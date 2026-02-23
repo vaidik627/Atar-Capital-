@@ -13,7 +13,7 @@ load_dotenv()
 # ============================================================================
 
 # OpenAI API Configuration
-LLM_API_KEY = os.environ.get('OPENAI_API_KEY')
+LLM_API_KEY = os.environ.get('LLM_API_KEY', os.environ.get('OPENAI_API_KEY'))
 LLM_MODEL = os.environ.get('LLM_MODEL', 'openai/gpt-oss-120b')
 LLM_BASE_URL = os.environ.get('LLM_BASE_URL')
 
@@ -87,6 +87,9 @@ print(f"   Revenue Data dir: {REVENUE_DATA_DIR}")
 print(f"   Reports dir: {REPORTS_DIR}")
 print(f"   LLM Model: {LLM_MODEL}")
 print(f"   API Key: {'✓ SET' if LLM_API_KEY else '✗ NOT SET'}")
+if LLM_API_KEY:
+    print(f"   API Key (masked): {LLM_API_KEY[:5]}...{LLM_API_KEY[-4:]}")
+print(f"   Base URL: {LLM_BASE_URL}")
 
 # ============================================================================
 # VALIDATION HELPERS

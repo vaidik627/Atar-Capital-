@@ -23,6 +23,8 @@ from .schema import (
     get_free_cash_flow_schema,
     get_capex_schema,
     get_change_in_working_capital_schema,
+    get_balance_sheet_schema,
+    get_debt_profile_schema,
     validate_schema
 )
 
@@ -68,8 +70,8 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
     if not api_key:
         raise ValueError("❌ No LLM API key provided. Set in config.py or pass as argument.")
     
-    if not ocr_text or len(ocr_text.strip()) < 100:
-        raise ValueError(f"❌ OCR text too short: {len(ocr_text) if ocr_text else 0} chars (min 100)")
+    if not ocr_text or len(ocr_text.strip()) < 10:
+        raise ValueError(f"❌ OCR text too short: {len(ocr_text) if ocr_text else 0} chars (min 10)")
     
     print(f"✓ Input validated")
     print(f"  Deal ID: {deal_id or 'Not specified'}")
@@ -237,6 +239,29 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
                 extracted_data.get("free_cash_flow"),
                 extracted_data
             )
+            
+        try:
+            bs_only = _extract_balance_sheet_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            if isinstance(bs_only, dict) and "balance_sheet" in bs_only:
+                extracted_data["balance_sheet"] = bs_only["balance_sheet"]
+        except Exception as e:
+            print(f"⚠️  Separate Balance Sheet extraction failed: {e}")
+
+        try:
+            dp_only = _extract_debt_profile_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            if isinstance(dp_only, dict) and "debt_profile" in dp_only:
+                extracted_data["debt_profile"] = dp_only["debt_profile"]
+        except Exception as e:
+            print(f"⚠️  Separate Debt Profile extraction failed: {e}")
+
         
         # Validate against schema
         is_valid, errors = validate_schema(extracted_data)
@@ -634,6 +659,107 @@ Example Output Shape (Illustrative)
 """
 
 
+def _extract_balance_sheet_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
+    if len(ocr_text) > MAX_OCR_CHARS:
+        ocr_text = ocr_text[:MAX_OCR_CHARS]
+
+    try:
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _build_balance_sheet_prompt()},
+                {"role": "user", "content": f"Extract Balance Sheet data from this OCR text:\n\n{ocr_text}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS
+        )
+    except Exception as e:
+        error_msg = f"Balance Sheet LLM API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "BS_API_FAILURE")
+        raise
+
+    raw_content = response.choices[0].message.content
+    bs_only = _parse_json_safely(raw_content)
+    return bs_only
+
+
+def _build_balance_sheet_prompt() -> str:
+    schema = json.dumps(get_balance_sheet_schema(), indent=2)
+    return f"""
+You are a financial data extraction assistant.
+Extract Balance Sheet items for all available historical years.
+
+Return ONLY valid JSON matching this schema exactly:
+{schema}
+
+Instructions:
+1. Identify all balance sheet assets, liabilities, and equity sections.
+2. For "assets", extract items like "Cash and cash equivalents", "Accounts receivable", "Inventories", "Property, plant, and equipment", "Intangible assets".
+3. For "liabilities", extract items like "Accounts payable", "Current portion of long-term debt", "Long term debt", "Revolver", "Term Loan".
+4. For "equity", extract equity/net assets.
+5. Create an object for each item, listing its values by period (e.g. "FY21", "FY22").
+6. Extract values strictly as written (do not flip signs unexpectedly).
+7. If the balance sheet is completely missing, return empty arrays.
+"""
+
+
+def _extract_debt_profile_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
+    if len(ocr_text) > MAX_OCR_CHARS:
+        ocr_text = ocr_text[:MAX_OCR_CHARS]
+
+    try:
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _build_debt_profile_prompt()},
+                {"role": "user", "content": f"Extract Debt Profile / Facilities data from this OCR text:\n\n{ocr_text}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS
+        )
+    except Exception as e:
+        error_msg = f"Debt Profile LLM API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "DEBT_API_FAILURE")
+        raise
+
+    raw_content = response.choices[0].message.content
+    dp_only = _parse_json_safely(raw_content)
+    return dp_only
+
+
+def _build_debt_profile_prompt() -> str:
+    schema = json.dumps(get_debt_profile_schema(), indent=2)
+    return f"""
+You are a financial data extraction assistant.
+Extract information about the company's Debt Profile, Credit Facilities, Term Loans, and Revolvers.
+
+Return ONLY valid JSON matching this schema exactly:
+{schema}
+
+Instructions:
+1. Search the document for sections labeled "Capital Structure", "Debt", "Financing", "Credit Agreement", "Facilities".
+2. Identify each specific debt facility (e.g. "Revolving Credit Facility", "Term Loan A", "Subordinated Debt", "Seller Note").
+3. For each facility, extract the current balance/outstanding amount.
+4. Extract the interest rate (often a percentage or spread, e.g. "SOFR + 4.5%". For the percentage, provide the total approximate % if possible, or just the main number). Use null if missing.
+5. Extract the mandatory annual amortization amount (often expressed in $ millions). Use null if missing.
+6. If no debt profile is found, return an empty array for facilities.
+"""
+
+
 # ============================================================================
 # FILE OPERATIONS
 # ============================================================================
@@ -787,15 +913,21 @@ You must return data matching this exact structure:
    - Include period (e.g., "FY2023", "Q1 2024"), value, and unit (millions/thousands)
 
 3. **Profit Metrics (COMPREHENSIVE):**
-   - **Gross Profit:** Extract values, margins, and trends.
+   - **MUST extract EXACTLY from the "Income Statement" table.**
+   - **Do NOT calculate. Do NOT infer. Do NOT interpolate.** if it is missing, return empty.
+   - **Gross Profit:** Extract exact values.
+   - **Operating Expenses:** Extract exact value from the row labeled "Operating Expenses" or similar total operating cost rows.
    - **Operating Income:** Extract operating profit/loss.
-   - **EBITDA:** Extract EBITDA and Adjusted EBITDA. **CRITICAL:** Look for "Adjusted EBITDA" reconciliations or footnotes.
+   - **EBITDA:** Extract exactly as written. Do NOT compute EBITDA from revenue.
+   - **Adjusted EBITDA:** Extract exactly as written if available.
    - **Net Income:** Extract Net Income / Net Profit after tax.
-   - **Margins:** Calculate or extract Gross Margin %, Operating Margin %, EBITDA Margin %, Net Margin %.
-   - **EPS:** Earnings Per Share (Basic and Diluted).
-   - **Cash Flow:** Operating Cash Flow, Free Cash Flow (if available).
+   - **Margins:** Do NOT re-calculate margins. Extract ONLY if explicitly written.
    - Store as arrays with `period`, `value` (number), `unit`, `source_context`.
-   - Ensure you capture the *exact* fiscal period (e.g., "FY23", "Q1 24", "LTM Sep 23").
+   - **CRITICAL YEAR SUFFIX RULE FOR PERIODS**:
+     - Extract the suffix EXACTLY from the column header.
+     - If it ends in "A" -> Actual.
+     - If it ends in "B", "E", "F", "R", "M" -> Forecast/Not Actual.
+     - If NO suffix is present: if the table title contains 'Forecast', append 'E'. If the table title contains 'Income Statement' and contains FYXX only, append 'A'.
 
 4. **Market Intelligence (HIGH PRIORITY):**
    - **Industry Position:** Explicitly state the company's rank (e.g., "#1 in US", "Market Leader"). If not stated, infer from context (e.g., "leading provider" -> "Top Tier").
