@@ -192,21 +192,19 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         wc_by_year = _extract_tale_year_wise(data, "change_in_working_capital", unit_scale)
         one_time_by_year = _extract_tale_year_wise(data, "one_time_cost", unit_scale)
         if not one_time_by_year:
-            # Fallback to sum of transaction_assumptions ebitda adjustments
+            # Fallback to sum of transaction_assumptions ebitda adjustments by year
             ta = data.get("transaction_assumptions", {})
             adj = ta.get("ebitda_adjustments", [])
             if isinstance(adj, list) and adj:
-                total_adj_val = 0.0
                 for item in adj:
                     if isinstance(item, dict):
                         for val_obj in item.get("values", []):
-                            num = _safe_float(val_obj.get("value"))
-                            if num:
-                                total_adj_val += float(num)
-                                break
-                if total_adj_val != 0.0:
-                    for y in ebitda_by_year.keys():
-                        one_time_by_year[y] = total_adj_val
+                            y = _parse_year(val_obj.get("period"))
+                            if y is None:
+                                continue
+                            num = _parse_amount(val_obj.get("value"), unit_scale)
+                            if num is not None:
+                                one_time_by_year[y] = one_time_by_year.get(y, 0.0) + float(num)
 
         fcf_hist_by_year, fcf_forecast_by_year = _extract_fcf(data, unit_scale)
 
@@ -278,7 +276,7 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
             # Tale of the Tape - populate based on role
             _write_line(ws, row_map.get("capex"), year_cols, capex_set, force_negative=True, template_scale=unit_scale)
             _write_line(ws, row_map.get("change_in_wc"), year_cols, wc_set, force_negative=True, template_scale=unit_scale)
-            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=False, template_scale=unit_scale)
+            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=True, template_scale=unit_scale)
             # FCF row is typically a formula (=SUM), so we skip it or write only if no formula exists
             _write_line(ws, row_map.get("free_cash_flow"), year_cols, fcf_all if role == "actual" else {}, force_negative=False, template_scale=unit_scale)
             updated_any = True
@@ -310,7 +308,7 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
             _write_line(ws, row_map.get("adj_ebitda"), year_cols, adj_ebitda_set, is_ebitda=True, template_scale=unit_scale)
             _write_line(ws, row_map.get("capex"), year_cols, capex_set, force_negative=True, template_scale=unit_scale)
             _write_line(ws, row_map.get("change_in_wc"), year_cols, wc_set, force_negative=True, template_scale=unit_scale)
-            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=False, template_scale=unit_scale)
+            _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=True, template_scale=unit_scale)
             updated_any = True
 
         # ── 3. FCF + Debt model (pre-computed in Python, no Excel formulas) ──────
@@ -353,7 +351,7 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
             debt_facilities=debt_profile_api,
             template_scale=unit_scale
         )
-        _write_fcf_model_to_excel(ws, row_map, actual_year_cols, actual_fcf_model, template_scale=unit_scale)
+        _write_fcf_model_to_excel(ws, row_map, actual_year_cols, actual_fcf_model, template_scale=unit_scale, is_actual=True)
 
         proj_fcf_model = _compute_fcf_model(
             years=projection_years,
@@ -378,9 +376,9 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         # ── 3.5 Inject Default Deal Assumptions ────────
         if _sheet_contains_text(ws, "Purchase Assumptions") or _sheet_contains_text(ws, "Exit Assumptions"):
             _inject_default_assumptions(ws, data)
-            _inject_debt_profile(ws, data)
+            _inject_debt_profile(ws, data, template_scale=unit_scale)
             _inject_purchase_assumptions(ws, data)
-            _inject_sources_uses(ws, data)
+            _inject_sources_uses(ws, data, template_scale=unit_scale)
 
         # ── 4. Final pass: erase any remaining #DIV/0! / formula errors ────────
         _erase_excel_errors(ws)
@@ -568,7 +566,8 @@ def _write_fcf_model_to_excel(
     row_map: Dict[str, Optional[int]],
     year_cols: Dict[int, int],
     model: Dict[int, Dict[str, Optional[float]]],
-    template_scale: Optional[float] = None
+    template_scale: Optional[float] = None,
+    is_actual: bool = False
 ) -> None:
     """Write pre-computed FCF/Debt model values to Excel cells. No formulas."""
     field_keys = [
@@ -592,12 +591,14 @@ def _write_fcf_model_to_excel(
         for y, col in year_cols.items():
             year_data = model.get(y)
             if year_data is None:
-                ws.cell(row=row, column=col).value = "-"
+                if not is_actual:
+                    ws.cell(row=row, column=col).value = "-"
                 continue
             v = _safe_float(year_data.get(field))
             cell = ws.cell(row=row, column=col)
             if v is None:
-                cell.value = "-"
+                if not is_actual:
+                    cell.value = "-"
             else:
                 cell.value = v
                 if template_scale is not None:
@@ -714,22 +715,34 @@ def _inject_purchase_assumptions(ws, data: Dict[str, Any]) -> None:
                             target_cell.value = float(exit_mult)
                         break
 
-def _inject_sources_uses(ws, data: Dict[str, Any]) -> None:
+def _inject_sources_uses(ws, data: Dict[str, Any], template_scale: float = 1.0) -> None:
     ta = data.get("transaction_assumptions", {})
-    purchase_price = ta.get("purchase_price")
-    transaction_fees = ta.get("transaction_fees")
+    unit_mult = 1.0
+    ebitda_vals = data.get("profit_metrics", {}).get("ebitda", [])
+    if ebitda_vals and isinstance(ebitda_vals[-1], dict):
+        unit_mult = _unit_multiplier_from_unit(ebitda_vals[-1].get("unit"))
+        
+    def _scale(v):
+        if v is None: return None
+        if isinstance(v, (int, float)): return (float(v) * unit_mult) / template_scale
+        p = _parse_amount(v, template_scale)
+        if p is not None and unit_mult != 1.0 and not _value_mentions_scale(v):
+            return p * unit_mult
+        return p
+
+    purchase_price = _scale(ta.get("purchase_price"))
+    transaction_fees = _scale(ta.get("transaction_fees"))
 
     # Only derived if missing
     if purchase_price is None:
         # derive: EV = EBITDA * multiple
         recent_ebitda = None
-        ebitda_vals = data.get("profit_metrics", {}).get("ebitda", [])
         if ebitda_vals:
-            recent_ebitda = _safe_float(ebitda_vals[-1].get("value"))
+            recent_ebitda = _scale(ebitda_vals[-1].get("value"))
         
         entry_mult = ta.get("entry_multiple") or 5.0
         if recent_ebitda:
-            purchase_price = recent_ebitda * entry_mult
+            purchase_price = recent_ebitda * float(entry_mult)
 
     if transaction_fees is None and purchase_price:
         transaction_fees = purchase_price * 0.02 # 2% proxy
@@ -750,18 +763,32 @@ def _inject_sources_uses(ws, data: Dict[str, Any]) -> None:
                         ws.cell(row=r, column=8).value = float(transaction_fees)
 
 
-def _inject_debt_profile(ws, data: Dict[str, Any]) -> None:
+
+def _inject_debt_profile(ws, data: Dict[str, Any], template_scale: float = 1.0) -> None:
     """Injects extracted debt profile into Financing, Interest, and Amortization blocks."""
     dp = data.get("debt_profile", {}).get("facilities", [])
     if not isinstance(dp, list) or not dp:
         return
         
+    unit_mult = 1.0
+    ebitda_vals = data.get("profit_metrics", {}).get("ebitda", [])
+    if ebitda_vals and isinstance(ebitda_vals[-1], dict):
+        unit_mult = _unit_multiplier_from_unit(ebitda_vals[-1].get("unit"))
+        
+    def _scale(v):
+        if v is None: return None
+        if isinstance(v, (int, float)): return (float(v) * unit_mult) / template_scale
+        p = _parse_amount(v, template_scale)
+        if p is not None and unit_mult != 1.0 and not _value_mentions_scale(v):
+            return p * unit_mult
+        return p
+        
     for fac in dp:
         name = fac.get("name")
         if not name: continue
-        bal = fac.get("balance")
+        bal = _scale(fac.get("balance"))
         rate = fac.get("interest_rate_percent")
-        amort = fac.get("amortization_per_year")
+        amort = _scale(fac.get("amortization_per_year"))
         
         name_lower = name.lower()
         # Clean "term loan a" -> "term loan" to match template
@@ -810,6 +837,10 @@ def _inject_debt_profile(ws, data: Dict[str, Any]) -> None:
 def _clear_template_inputs(ws, year_blocks: List[Dict[str, Any]], row_map: Dict[str, Optional[int]]) -> None:
     cols: List[int] = []
     for b in year_blocks:
+        role = b.get("role", "projection")
+        # Ensure we NEVER wipe the historical actuals to protect manual Excel inputs
+        if role == "actual":
+            continue
         bc = b.get("cols")
         if isinstance(bc, list):
             for c in bc:
@@ -1543,16 +1574,16 @@ def _parse_amount(value: Any, template_scale: float) -> Optional[float]:
     s_l = s.lower()
     if "billion" in s_l or s_l.endswith("b"):
         mult = 1_000_000_000.0
-        s_clean = re.sub(r"(?i)billion|\\bb\\b", "", s_clean).strip()
+        s_clean = re.sub(r"(?i)billion|\bb\b", "", s_clean).strip()
     elif "million" in s_l or s_l.endswith("m"):
         mult = 1_000_000.0
-        s_clean = re.sub(r"(?i)million|\\bm\\b", "", s_clean).strip()
+        s_clean = re.sub(r"(?i)million|\bm\b", "", s_clean).strip()
     elif "thousand" in s_l or s_l.endswith("k"):
         mult = 1_000.0
-        s_clean = re.sub(r"(?i)thousand|\\bk\\b", "", s_clean).strip()
+        s_clean = re.sub(r"(?i)thousand|\bk\b", "", s_clean).strip()
 
     try:
-        parts = re.findall(r"-?\\d+(?:\\.\\d+)?", s_clean)
+        parts = re.findall(r"-?\d+(?:\.\d+)?", s_clean)
         if not parts:
             return None
         if len(parts) == 1:
@@ -1573,7 +1604,7 @@ def _value_mentions_scale(value: Any) -> bool:
     s = str(value).strip().lower()
     if not s:
         return False
-    s_clean = re.sub(r"[\\s,$]", "", s)
+    s_clean = re.sub(r"[\s,$]", "", s)
     return any(tok in s for tok in ("billion", "million", "thousand")) or s_clean.endswith(("b", "m", "k"))
 
 
@@ -1583,7 +1614,7 @@ def _unit_multiplier_from_unit(unit: Any) -> float:
     s = str(unit).strip().lower()
     if not s:
         return 1.0
-    s_clean = re.sub(r"[\\s,$]", "", s)
+    s_clean = re.sub(r"[\s,$]", "", s)
     if "billion" in s_clean or s_clean in {"b", "bn"} or s_clean.endswith("b"):
         return 1_000_000_000.0
     if "million" in s_clean or s_clean in {"m", "mm"} or s_clean.endswith("m"):
@@ -1713,7 +1744,7 @@ def _fill_future_projections(
     target_years = range(base_year + 1, base_year + 6)
     
     # --- 1. Extend Revenue ---
-    known_rev_years = sorted([y for y in revenue.keys() if y <= base_year])
+    known_rev_years = sorted(revenue.keys())
     
     cagr = 0.05  # Default fallback
     
@@ -1784,7 +1815,7 @@ def _fill_future_projections(
                 current_val = new_val
 
     # --- 2. Extend Gross Profit ---
-    known_gp_years = sorted([y for y in gross_profit.keys() if y <= base_year])
+    known_gp_years = sorted(gross_profit.keys())
     
     avg_gm = 0.40 # Default
     margins = []
@@ -1812,43 +1843,57 @@ def _fill_future_projections(
         if rev is not None:
             gross_profit[y] = rev * avg_gm
 
-    # --- 3. Extend OpEx ---
-    known_opex_years = sorted([y for y in opex.keys() if y <= base_year])
-    avg_opex_margin = 0.25 # Default 25% of revenue
-    opex_margins = []
+    # --- 3. Extend EBITDA (Safeguarded) ---
+    known_ebitda_years = sorted(ebitda.keys())
+    avg_ebitda_margin = 0.15 # Default
+    ebitda_margins = []
     
-    if known_opex_years:
-        recent_years = known_opex_years[-3:]
+    if known_ebitda_years:
+        recent_years = known_ebitda_years[-3:]
         for y in recent_years:
             r = revenue.get(y)
-            o = opex.get(y)
-            if r and o and r != 0:
-                opex_margins.append(abs(o) / r)
+            e = ebitda.get(y)
+            if r and e is not None and r != 0:
+                ebitda_margins.append(e / r)
                 
-        if opex_margins:
+        if ebitda_margins:
             if mode == "management":
-                avg_opex_margin = sum(opex_margins) / len(opex_margins) * 0.9 # Optimization
+                avg_ebitda_margin = max(ebitda_margins) # Optimistic
+                # Management always assumes a turnaround if historic was negative
+                if avg_ebitda_margin < 0:
+                    avg_ebitda_margin = 0.05
             else:
-                avg_opex_margin = sum(opex_margins) / len(opex_margins)
-                
-    for y in target_years:
-        if y in opex:
-            continue
-        rev = revenue.get(y)
-        if rev is not None:
-            opex[y] = rev * avg_opex_margin
+                avg_ebitda_margin = sum(ebitda_margins) / len(ebitda_margins)
+                # Safeguard: if most recent year was profitable, don't project long-term losses due to past averages
+                last_y = known_ebitda_years[-1]
+                last_r = revenue.get(last_y)
+                last_e = ebitda.get(last_y)
+                if last_r and last_e is not None and last_r != 0:
+                    recent_margin = last_e / last_r
+                    if recent_margin > 0 and avg_ebitda_margin < 0:
+                        avg_ebitda_margin = recent_margin * 0.5
 
-    # --- 4. Extend EBITDA ---
-    # According to new rule: For each projection year, EBITDA = Revenue - COGS - Opex
-    # And Revenue - COGS = Gross Profit. So EBITDA = Gross Profit - Opex.
+    # Ensure EBITDA margin doesn't exceed Gross Margin (OpEx can't be negative)
+    # Ensure minimum 5% margin for OpEx vs Gross Margin
+    avg_ebitda_margin = min(avg_ebitda_margin, avg_gm - 0.05)
+
     for y in target_years:
         if y in ebitda:
             continue
+        rev = revenue.get(y)
+        if rev is not None:
+            ebitda[y] = rev * avg_ebitda_margin
+
+    # --- 4. Extend OpEx (As Plug) ---
+    # To maintain accounting integrity: EBITDA = Gross Profit - OpEx
+    # Therefore, OpEx = Gross Profit - EBITDA
+    for y in target_years:
+        if y in opex:
+            continue
         g = gross_profit.get(y)
-        o = opex.get(y)
-        if g is not None and o is not None:
-            # We must subtract absolute OpEx, since OpEx might be stored as positive naturally
-            ebitda[y] = g - abs(o)
+        e = ebitda.get(y)
+        if g is not None and e is not None:
+            opex[y] = g - e
 
 
 def _extract_series_by_year(items: Any, template_scale: float) -> Dict[int, float]:

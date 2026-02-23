@@ -1,0 +1,50 @@
+[
+  {
+    "period": "2019A",
+    "value": 20,
+    "unit": "$M",
+    "source_context": "Historical Financial Overview"
+  },
+  {
+    "period": "2020A",
+    "value": -4,
+    "unit": "$M",
+    "source_context": "Historical Financial Overview"
+  },
+  {
+    "period": "2021A",
+    "value": -1,
+    "unit": "$M",
+    "source_context": "Historical Financial Overview"
+  },
+  {
+    "period": "2022A",
+    "value": -21,
+    "unit": "$M",
+    "source_context": "Historical Financial Overview"
+  },
+  {
+    "period": "2023E",
+    "value": 5,
+    "unit": "$M",
+    "source_context": "Projected Financial Overview"
+  },
+  {
+    "period": "2024P",
+    "value": 23,
+    "unit": "$M",
+    "source_context": "Projected Financial Overview"
+  },
+  {
+    "period": "2025P",
+    "value": 32,
+    "unit": "$M",
+    "source_context": "Projected Financial Overview"
+  },
+  {
+    "period": "2026P",
+    "value": 42,
+    "unit": "$M",
+    "source_context": "Projected Financial Overview"
+  }
+]

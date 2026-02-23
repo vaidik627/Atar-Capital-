@@ -418,7 +418,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <tr>
                                             <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">${h.period}</td>
                                             <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9; font-weight: 500;">
-                                                ${currencySymbol}${h.value.toString().replace(currencySymbol, '')} ${h.unit || ''}
+                                                ${currencySymbol}${fmt(h.value).toString().replace(currencySymbol, '')} ${h.unit || ''}
                                             </td>
                                         </tr>
                                     `).join('')}
@@ -426,7 +426,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <tr style="color: var(--text-secondary);">
                                             <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">${f.period} (E)</td>
                                             <td style="padding: 0.5rem 0; border-top: 1px solid #f1f5f9;">
-                                                ${currencySymbol}${f.value.toString().replace(currencySymbol, '')} ${f.unit || ''}
+                                                ${currencySymbol}${fmt(f.value).toString().replace(currencySymbol, '')} ${f.unit || ''}
                                             </td>
                                         </tr>
                                     `).join('')}
