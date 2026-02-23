@@ -532,18 +532,35 @@ def _update_template_header(ws, deal_name: str, currency: Any) -> None:
         "client name",
         "target name",
         "[company name]",
-        "<company name>"
+        "<company name>",
+        "manta ray",
+        "manta ray segmented balance sheet"
     }
 
     replaced = False
-    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 20), min_col=1, max_col=min(ws.max_column, 20)):
+    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 30), min_col=1, max_col=min(ws.max_column, 20)):
         for cell in row:
             v = cell.value
             if isinstance(v, str):
                 s = v.strip().lower()
+                # Direct exact match replacement for placeholders (e.g. "Manta Ray")
                 if s in target_placeholders:
                     cell.value = deal_name
                     replaced = True
+                # Also handle partial matches where the name is part of a longer string 
+                # e.g "Manta Ray segmented balance sheet" -> "DealName segmented balance sheet"
+                else:
+                    for ph in target_placeholders:
+                        if ph in s:
+                            # Use regex to do a case-insensitive replacement to preserve the rest of the string
+                            import re
+                            # Compile regex pattern to match the placeholder case-insensitively
+                            pattern = re.compile(re.escape(ph), re.IGNORECASE)
+                            new_val = pattern.sub(deal_name, v)
+                            if new_val != v:
+                                cell.value = new_val
+                                replaced = True
+
     if replaced:
         return
 
