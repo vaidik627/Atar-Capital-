@@ -95,6 +95,20 @@ def get_extraction_schema():
         },
         "debt_profile": {
             "facilities": []
+        },
+        "transaction_assumptions": {
+            "purchase_price": None,
+            "seller_rollover": None,
+            "transaction_fees": None,
+            "entry_multiple": None,
+            "exit_multiple": None,
+            "ebitda_adjustments": []
+        },
+        "interest_schedule": {
+            "revolver": {},
+            "term_loan": {},
+            "seller_note": {},
+            "interest_subtotal": {}
         }
     }
 
@@ -307,4 +321,29 @@ def get_empty_schema():
 
 
 # Remove sample data function completely - no demo data allowed
-# If you need sample data for testing, use actual extracted data from files
+def get_transaction_assumptions_schema():
+    return {
+        "transaction_assumptions": {
+            "purchase_price": 500.0,
+            "seller_rollover": 50.0,
+            "transaction_fees": 10.0,
+            "entry_multiple": 5.0,
+            "exit_multiple": 5.0,
+            "ebitda_adjustments": [
+                {
+                    "item_name": "Management Fees",
+                    "values": [{"period": "FY24", "value": 5.0}]
+                }
+            ]
+        }
+    }
+
+def get_interest_schedule_schema():
+    return {
+        "interest_schedule": {
+            "revolver": {"FY23": 0.5, "FY24": 0.6},
+            "term_loan": {"FY23": 2.0, "FY24": 2.5},
+            "seller_note": {"FY23": 0.0, "FY24": 0.0},
+            "interest_subtotal": {"FY23": 2.5, "FY24": 3.1}
+        }
+    }

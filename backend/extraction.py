@@ -25,6 +25,7 @@ from .schema import (
     get_change_in_working_capital_schema,
     get_balance_sheet_schema,
     get_debt_profile_schema,
+    get_transaction_assumptions_schema,
     validate_schema
 )
 
@@ -262,6 +263,27 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
         except Exception as e:
             print(f"⚠️  Separate Debt Profile extraction failed: {e}")
 
+        try:
+            ta_only = _extract_transaction_assumptions_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            if isinstance(ta_only, dict) and "transaction_assumptions" in ta_only:
+                extracted_data["transaction_assumptions"] = ta_only["transaction_assumptions"]
+        except Exception as e:
+            print(f"⚠️  Separate Transaction Assumptions extraction failed: {e}")
+
+        try:
+            is_only = _extract_interest_schedule_separately(
+                client=client,
+                ocr_text=ocr_text,
+                deal_id=deal_id
+            )
+            if isinstance(is_only, dict) and "interest_schedule" in is_only:
+                extracted_data["interest_schedule"] = is_only["interest_schedule"]
+        except Exception as e:
+            print(f"⚠️  Separate Interest Schedule extraction failed: {e}")
         
         # Validate against schema
         is_valid, errors = validate_schema(extracted_data)
@@ -1781,3 +1803,117 @@ def get_extraction_status(deal_id: str) -> Dict[str, Any]:
         "company_name": extracted.get('company_name') if extracted else None,
         "data_quality": "complete" if extracted and validate_schema(extracted)[0] else "partial"
     }
+
+
+def _extract_transaction_assumptions_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
+    if len(ocr_text) > MAX_OCR_CHARS:
+        ocr_text = ocr_text[:MAX_OCR_CHARS]
+
+    try:
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _build_transaction_assumptions_prompt()},
+                {"role": "user", "content": f"Extract transaction assumptions from this OCR text:\n\n{ocr_text}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS
+        )
+    except Exception as e:
+        error_msg = f"Transaction Assumptions API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "TA_API_FAILURE")
+        raise
+
+    raw_content = response.choices[0].message.content
+    if not raw_content:
+        raise ValueError("TA-only LLM returned empty response")
+
+    ta_only = _parse_json_safely(raw_content)
+    if not isinstance(ta_only, dict):
+        raise ValueError("TA-only LLM returned non-object JSON")
+    return ta_only
+
+
+def _build_transaction_assumptions_prompt() -> str:
+    ta_schema = json.dumps(get_transaction_assumptions_schema(), indent=2)
+    return f"""
+You are an expert investment banking operations assistant.
+
+Your task is to extract sources & uses data, transaction assumptions, and EBITDA adjustments (Quality of Earnings add-backs) from the OCR text. 
+
+You MUST follow the schema exactly.
+DO NOT hallucinate.
+
+Schema:
+{ta_schema}
+
+Extraction Rules:
+1. 'purchase_price': Search for Enterprise Value, Purchase Price. If not found, return null. 
+2. 'seller_rollover': Look for rollover equity, management rollover.
+3. 'transaction_fees': Look for total diligence or transaction fees. Provide as a number (in the document's scale, typically millions or thousands).
+4. 'entry_multiple': Extract Entry Multiple explicitly stated (e.g., 5.0). 
+5. 'exit_multiple': Extract Exit Multiple explicitly stated (e.g., 5.0).
+6. 'ebitda_adjustments': Extract an array of objects for specific adjustments to EBITDA (e.g. 'Severance', 'Rent adjustment', 'COVID disruption'). Include the item name and an array of periodic values found.
+
+If a specific metric is completely missing, return null for its field. Do not make up a value.
+Return ONLY valid JSON.
+"""
+
+def _extract_interest_schedule_separately(
+    client: OpenAI,
+    ocr_text: str,
+    deal_id: Optional[str] = None
+) -> Dict[str, Any]:
+    if len(ocr_text) > MAX_OCR_CHARS:
+        ocr_text = ocr_text[:MAX_OCR_CHARS]
+
+    try:
+        from .schema import get_interest_schedule_schema
+        is_schema = json.dumps(get_interest_schedule_schema(), indent=2)
+        system_prompt = f"""You are an expert financial extraction assistant.
+Task: Extract the precise Interest Schedule (Revolver Interest, Term Loan Interest, Seller Note Interest, Interest Subtotal) from the OCR text.
+Do not hallucinate. Do not recalculate if not present. Just extract values for historical/current years.
+
+Schema:
+{is_schema}
+
+Rules:
+1. 'revolver': Extract interest paid specifically labelled for Revolvers.
+2. 'term_loan': Extract interest paid specifically labelled for Term Loans.
+3. 'seller_note': Extract interest paid specifically labelled for Seller Notes.
+4. 'interest_subtotal': Total interest or interest expense.
+Map these to the exact years found (e.g. {{"2022": 5.0, "2023": 6.5}}). If any specific breakdown is missing, return empty object {{}}.
+Return ONLY valid JSON.
+"""
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Extract the interest schedule from this OCR text:\n\n{ocr_text}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=MAX_TOKENS
+        )
+    except Exception as e:
+        error_msg = f"Interest Schedule API call failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if deal_id:
+            _save_error_log(deal_id, error_msg, "IS_API_FAILURE")
+        raise
+
+    raw_content = response.choices[0].message.content
+    if not raw_content:
+        raise ValueError("IS-only LLM returned empty response")
+
+    is_only = _parse_json_safely(raw_content)
+    if not isinstance(is_only, dict):
+        raise ValueError("IS-only LLM returned non-object JSON")
+    return is_only
