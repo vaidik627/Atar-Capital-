@@ -110,7 +110,24 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
 
         from typing import List
 
-        revenue_by_year = _extract_series_by_year(_collect_revenue_items(data), unit_scale)
+        # Determine global unit multiplier based on revenue to inherit if missing
+        global_unit_mult = 1.0
+        rev = data.get("revenue", {})
+        if isinstance(rev, dict):
+            present = rev.get("present")
+            if isinstance(present, dict) and present.get("unit"):
+                m = _unit_multiplier_from_unit(present.get("unit"))
+                if m != 1.0:
+                    global_unit_mult = m
+            if global_unit_mult == 1.0:
+                for it in rev.get("history", []) if isinstance(rev.get("history"), list) else []:
+                    if isinstance(it, dict) and it.get("unit"):
+                        m = _unit_multiplier_from_unit(it.get("unit"))
+                        if m != 1.0:
+                            global_unit_mult = m
+                            break
+
+        revenue_by_year = _extract_series_by_year(_collect_revenue_items(data), unit_scale, global_unit_mult)
         actual_years_sorted = _get_actual_years_from_data(data, base_year)
         if actual_years_sorted:
             base_year = actual_years_sorted[-1]
@@ -121,9 +138,9 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         year_blocks = _detect_year_blocks(ws)
         _clear_template_inputs(ws, year_blocks, row_map)
 
-        gross_profit_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("gross_profit", []), unit_scale)
-        ebitda_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("ebitda", []), unit_scale)
-        adj_ebitda_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("adjusted_ebitda", []), unit_scale)
+        gross_profit_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("gross_profit", []), unit_scale, global_unit_mult)
+        ebitda_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("ebitda", []), unit_scale, global_unit_mult)
+        adj_ebitda_by_year = _extract_series_by_year(data.get("profit_metrics", {}).get("adjusted_ebitda", []), unit_scale, global_unit_mult)
 
         # Create separate projection sets for ATAR (AI) and Management
         # ATAR: Conservative/Base AI projection
@@ -140,11 +157,13 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         operating_income_by_year = _extract_series_by_year(
             data.get("profit_metrics", {}).get("operating_income", []),
             unit_scale,
+            global_unit_mult
         )
         
         operating_expense_by_year = _extract_series_by_year(
             data.get("profit_metrics", {}).get("operating_expenses", []),
             unit_scale,
+            global_unit_mult
         )
         
         # OpEx for Actual -> MUST be strictly extracted Operating Expenses (no derivation allowed)
@@ -155,14 +174,24 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         if gross_profit_atar and ebitda_atar:
             for y in set(gross_profit_atar.keys()) & set(ebitda_atar.keys()):
                 if y not in opex_atar:
-                    opex_atar[y] = gross_profit_atar[y] - ebitda_atar[y]
+                    g = gross_profit_atar[y]
+                    e = ebitda_atar[y]
+                    if str(g).strip().upper() == "N/A" or str(e).strip().upper() == "N/A":
+                        opex_atar[y] = "N/A"
+                    else:
+                        opex_atar[y] = g - e
                     
         # OpEx for Management
         opex_mgmt = _derive_opex(gross_profit_mgmt, operating_income_by_year)
         if gross_profit_mgmt and ebitda_mgmt:
             for y in set(gross_profit_mgmt.keys()) & set(ebitda_mgmt.keys()):
                 if y not in opex_mgmt:
-                    opex_mgmt[y] = gross_profit_mgmt[y] - ebitda_mgmt[y]
+                    g = gross_profit_mgmt[y]
+                    e = ebitda_mgmt[y]
+                    if str(g).strip().upper() == "N/A" or str(e).strip().upper() == "N/A":
+                        opex_mgmt[y] = "N/A"
+                    else:
+                        opex_mgmt[y] = g - e
 
         # Fill projections with different assumptions
         _fill_future_projections(
@@ -188,9 +217,9 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
         cogs_atar = _derive_cogs(revenue_atar, gross_profit_atar)
         cogs_mgmt = _derive_cogs(revenue_mgmt, gross_profit_mgmt)
         
-        capex_by_year = _extract_tale_year_wise(data, "capex", unit_scale)
-        wc_by_year = _extract_tale_year_wise(data, "change_in_working_capital", unit_scale)
-        one_time_by_year = _extract_tale_year_wise(data, "one_time_cost", unit_scale)
+        capex_by_year = _extract_tale_year_wise(data, "capex", unit_scale, global_unit_mult)
+        wc_by_year = _extract_tale_year_wise(data, "change_in_working_capital", unit_scale, global_unit_mult)
+        one_time_by_year = _extract_tale_year_wise(data, "one_time_cost", unit_scale, global_unit_mult)
         if not one_time_by_year:
             # Fallback to sum of transaction_assumptions ebitda adjustments by year
             ta = data.get("transaction_assumptions", {})
@@ -1308,20 +1337,28 @@ def _infer_model_row_range(ws, row_map: Dict[str, Optional[int]]) -> Tuple[Optio
 def _infer_base_year(data: Dict[str, Any]) -> int:
     rev = data.get("revenue", {})
     years: List[int] = []
+    # Option 1: Strictly prioritize "present" year if the AI successfully provided one
+    if isinstance(rev, dict):
+        present = rev.get("present")
+        if isinstance(present, dict):
+            y = _parse_year(present.get("period"))
+            if y is not None:
+                return int(y)
+                
+    # Option 2: Filter history to only include real history (No trailing P/E/F/R/M)
     if isinstance(rev, dict):
         hist = rev.get("history")
         if isinstance(hist, list):
             for it in hist:
                 if not isinstance(it, dict):
                     continue
-                y = _parse_year(it.get("period"))
+                period = str(it.get("period", "")).strip().upper()
+                # Ignore Proforma/Estimated/Forecast strings from "history"
+                if any(period.endswith(s) for s in ["P", "E", "F", "R", "M", "T", "B"]):
+                    continue
+                y = _parse_year(period)
                 if y is not None:
                     years.append(int(y))
-        present = rev.get("present")
-        if isinstance(present, dict):
-            y = _parse_year(present.get("period"))
-            if y is not None:
-                years.append(int(y))
 
     if years:
         return max(years)
@@ -1432,7 +1469,7 @@ def _get_actual_years_from_data(data: Dict[str, Any], base_year: int) -> List[in
         if y is None:
             continue
             
-        suffix_indicators = ["B", "F", "E", "R", "M"]
+        suffix_indicators = ["B", "F", "E", "R", "M", "P", "T"]
         if period.endswith("A"):
             years.add(y)
         elif not any(period.endswith(s) for s in suffix_indicators):
@@ -1762,7 +1799,7 @@ def _fill_future_projections(
     target_years = range(base_year + 1, base_year + 6)
     
     # --- 1. Extend Revenue ---
-    known_rev_years = sorted(revenue.keys())
+    known_rev_years = sorted([y for y, v in revenue.items() if str(v).strip().upper() != "N/A"])
     
     cagr = 0.05  # Default fallback
     
@@ -1833,7 +1870,7 @@ def _fill_future_projections(
                 current_val = new_val
 
     # --- 2. Extend Gross Profit ---
-    known_gp_years = sorted(gross_profit.keys())
+    known_gp_years = sorted([y for y, v in gross_profit.items() if str(v).strip().upper() != "N/A"])
     
     avg_gm = 0.40 # Default
     margins = []
@@ -1843,7 +1880,7 @@ def _fill_future_projections(
         for y in recent_years:
             r = revenue.get(y)
             g = gross_profit.get(y)
-            if r and g and r != 0:
+            if r and g and str(r).strip().upper() != "N/A" and str(g).strip().upper() != "N/A" and r != 0:
                 margins.append(g / r)
         
         if margins:
@@ -1862,7 +1899,7 @@ def _fill_future_projections(
             gross_profit[y] = rev * avg_gm
 
     # --- 3. Extend EBITDA (Safeguarded) ---
-    known_ebitda_years = sorted(ebitda.keys())
+    known_ebitda_years = sorted([y for y, v in ebitda.items() if str(v).strip().upper() != "N/A"])
     avg_ebitda_margin = 0.15 # Default
     ebitda_margins = []
     
@@ -1871,7 +1908,7 @@ def _fill_future_projections(
         for y in recent_years:
             r = revenue.get(y)
             e = ebitda.get(y)
-            if r and e is not None and r != 0:
+            if r and e is not None and str(r).strip().upper() != "N/A" and str(e).strip().upper() != "N/A" and r != 0:
                 ebitda_margins.append(e / r)
                 
         if ebitda_margins:
@@ -1886,7 +1923,7 @@ def _fill_future_projections(
                 last_y = known_ebitda_years[-1]
                 last_r = revenue.get(last_y)
                 last_e = ebitda.get(last_y)
-                if last_r and last_e is not None and last_r != 0:
+                if last_r and last_e is not None and str(last_r).strip().upper() != "N/A" and str(last_e).strip().upper() != "N/A" and last_r != 0:
                     recent_margin = last_e / last_r
                     if recent_margin > 0 and avg_ebitda_margin < 0:
                         avg_ebitda_margin = recent_margin * 0.5
@@ -1910,11 +1947,11 @@ def _fill_future_projections(
             continue
         g = gross_profit.get(y)
         e = ebitda.get(y)
-        if g is not None and e is not None:
+        if g is not None and e is not None and str(g).strip().upper() != "N/A" and str(e).strip().upper() != "N/A":
             opex[y] = g - e
 
 
-def _extract_series_by_year(items: Any, template_scale: float) -> Dict[int, float]:
+def _extract_series_by_year(items: Any, template_scale: float, global_unit_mult: float = 1.0) -> Dict[int, float]:
     if not isinstance(items, list):
         return {}
 
@@ -1928,7 +1965,16 @@ def _extract_series_by_year(items: Any, template_scale: float) -> Dict[int, floa
             # print(f"DEBUG: Failed to parse year from period: '{period}'")
             continue
         raw_value = it.get("value")
-        unit_mult = _unit_multiplier_from_unit(it.get("unit"))
+        
+        if str(raw_value).strip().upper() == "N/A":
+            out[y] = "N/A"
+            continue
+        
+        unit_str = it.get("unit")
+        if unit_str:
+            unit_mult = _unit_multiplier_from_unit(unit_str)
+        else:
+            unit_mult = global_unit_mult
 
         if isinstance(raw_value, (int, float)):
             val = (float(raw_value) * unit_mult) / template_scale
@@ -1945,7 +1991,7 @@ def _extract_series_by_year(items: Any, template_scale: float) -> Dict[int, floa
     return out
 
 
-def _extract_tale_year_wise(data: Dict[str, Any], key: str, template_scale: float) -> Dict[int, float]:
+def _extract_tale_year_wise(data: Dict[str, Any], key: str, template_scale: float, global_unit_mult: float = 1.0) -> Dict[int, float]:
     tale = data.get("tale_of_the_tape")
     if not isinstance(tale, dict):
         return {}
@@ -1956,13 +2002,23 @@ def _extract_tale_year_wise(data: Dict[str, Any], key: str, template_scale: floa
     if not isinstance(year_wise, dict):
         return {}
 
-    unit_mult = _unit_multiplier_from_unit(metric.get("unit"))
+    unit_str = metric.get("unit")
+    if unit_str:
+        unit_mult = _unit_multiplier_from_unit(unit_str)
+    else:
+        unit_mult = global_unit_mult
+        
     out: Dict[int, float] = {}
     for year_label, obj in year_wise.items():
         y = _parse_year(year_label)
         if y is None:
             continue
         v = obj.get("value") if isinstance(obj, dict) else obj
+        
+        if str(v).strip().upper() == "N/A":
+            out[y] = "N/A"
+            continue
+
         if isinstance(v, (int, float)):
             val = (float(v) * unit_mult) / template_scale
         else:
@@ -2059,14 +2115,24 @@ def _parse_year(period: Any) -> Optional[int]:
 def _derive_cogs(revenue: Dict[int, float], gross_profit: Dict[int, float]) -> Dict[int, float]:
     out: Dict[int, float] = {}
     for y in set(revenue.keys()) & set(gross_profit.keys()):
-        out[y] = revenue[y] - gross_profit[y]
+        r = revenue.get(y)
+        g = gross_profit.get(y)
+        if str(r).strip().upper() == "N/A" or str(g).strip().upper() == "N/A":
+            out[y] = "N/A"
+            continue
+        out[y] = r - g
     return out
 
 
 def _derive_opex(gross_profit: Dict[int, float], operating_income: Dict[int, float]) -> Dict[int, float]:
     out: Dict[int, float] = {}
     for y in set(gross_profit.keys()) & set(operating_income.keys()):
-        out[y] = gross_profit[y] - operating_income[y]
+        g = gross_profit.get(y)
+        o = operating_income.get(y)
+        if str(g).strip().upper() == "N/A" or str(o).strip().upper() == "N/A":
+            out[y] = "N/A"
+            continue
+        out[y] = g - o
     return out
 
 
@@ -2076,6 +2142,9 @@ def _derive_adj_ebitda(ebitda: Dict[int, float], adjustments: Dict[int, float]) 
         e = ebitda.get(y)
         a = adjustments.get(y, 0.0)
         if e is None:
+            continue
+        if str(e).strip().upper() == "N/A" or str(a).strip().upper() == "N/A":
+            out[y] = "N/A"
             continue
         out[y] = e + a
     return out
@@ -2096,6 +2165,10 @@ def _write_line(
         if year not in values:
             continue
         cell = ws.cell(row=row, column=col)
+        
+        if str(values[year]).strip().upper() == "N/A":
+            cell.value = "-"
+            continue
             
         v = float(values[year])
         
@@ -2132,7 +2205,13 @@ def _write_percent_line(
         den = denominator.get(year)
         if num is None or den in (None, 0):
             continue
+            
         cell = ws.cell(row=row, column=col)
+        
+        if str(num).strip().upper() == "N/A" or str(den).strip().upper() == "N/A":
+            cell.value = "-"
+            continue
+            
         ratio = float(num) / float(den)
         if isinstance(cell.number_format, str) and "%" in cell.number_format:
             cell.value = ratio

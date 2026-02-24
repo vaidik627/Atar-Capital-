@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "<string>", line 8, in <module>
+    generate_excel_report('deal_1771926301_2996008989', 'SDFA_Dash_Test', data)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\vaidi\Desktop\21_feb_2026\Atar-Capital-\backend\report_generator.py", line 313, in generate_excel_report
+    _write_percent_line(ws, row_map.get("gross_margin"), year_cols, gp_set, rev_set)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\vaidi\Desktop\21_feb_2026\Atar-Capital-\backend\report_generator.py", line 2209, in _write_percent_line
+    ratio = float(num) / float(den)
+            ~~~~~^^^^^
+ValueError: could not convert string to float: 'N/A'

@@ -28,6 +28,7 @@ from .schema import (
     get_transaction_assumptions_schema,
     validate_schema
 )
+from .fallback_resolver import apply_fallback_resolution
 
 # ============================================================================
 # MAIN EXTRACTION FUNCTION
@@ -284,6 +285,15 @@ def extract_financial_data(ocr_text: str, api_key: str = None, deal_id: str = No
                 extracted_data["interest_schedule"] = is_only["interest_schedule"]
         except Exception as e:
             print(f"⚠️  Separate Interest Schedule extraction failed: {e}")
+            
+        # -------------------------------------------------------------------------
+        # APPLY FALLBACK RESOLVER (4-Step Safety Net)
+        # -------------------------------------------------------------------------
+        try:
+            extracted_data = apply_fallback_resolution(extracted_data, ocr_text)
+        except Exception as e:
+            print(f"⚠️  Fallback Resolver failed (Continuing with raw AI data): {e}")
+            traceback.print_exc()
         
         # Validate against schema
         is_valid, errors = validate_schema(extracted_data)
