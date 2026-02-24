@@ -279,6 +279,12 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
             _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=True, template_scale=unit_scale)
             # FCF row is typically a formula (=SUM), so we skip it or write only if no formula exists
             _write_line(ws, row_map.get("free_cash_flow"), year_cols, fcf_all if role == "actual" else {}, force_negative=False, template_scale=unit_scale)
+            
+            # --- Dynamically write Margins if they are empty/calculated ---
+            _write_percent_line(ws, row_map.get("gross_margin"), year_cols, gp_set, rev_set)
+            _write_percent_line(ws, row_map.get("ebitda_margin"), year_cols, ebitda_set, rev_set)
+            _write_percent_line(ws, row_map.get("adj_ebitda_margin"), year_cols, adj_ebitda_set, rev_set)
+
             updated_any = True
             
         # 2. Process all explicitly detected Atar Projection blocks exactly as requested over the dynamically mapped coordinates.
@@ -309,6 +315,12 @@ def generate_excel_report(deal_id: str, deal_name: str, data: Dict[str, Any], te
             _write_line(ws, row_map.get("capex"), year_cols, capex_set, force_negative=True, template_scale=unit_scale)
             _write_line(ws, row_map.get("change_in_wc"), year_cols, wc_set, force_negative=True, template_scale=unit_scale)
             _write_line(ws, row_map.get("one_time_cost"), year_cols, one_time_set, force_negative=True, template_scale=unit_scale)
+            
+            # --- Dynamically write Margins for Atar projections ---
+            _write_percent_line(ws, row_map.get("gross_margin"), year_cols, gp_set, rev_set)
+            _write_percent_line(ws, row_map.get("ebitda_margin"), year_cols, ebitda_set, rev_set)
+            _write_percent_line(ws, row_map.get("adj_ebitda_margin"), year_cols, adj_ebitda_set, rev_set)
+
             updated_any = True
 
         # ── 3. FCF + Debt model (pre-computed in Python, no Excel formulas) ──────
@@ -854,15 +866,21 @@ def _clear_template_inputs(ws, year_blocks: List[Dict[str, Any]], row_map: Dict[
     if start_row is None or end_row is None:
         return
 
+    # Define rows that should be protected if they contain formulas (e.g., Margins, FCF)
+    protected_row_indices = {v for k, v in row_map.items() if v and ("margin" in k or "fcf" in k or "ratio" in k)}
+
     for r in range(start_row, end_row + 1):
+        # Skip clearing if this row is protected and contains a formula
+        is_protected = r in protected_row_indices
         for c in cols:
             cell = ws.cell(row=r, column=c)
             v = cell.value
             if v is None:
                 continue
-            # Overwrite formulas too — we will write real numbers
+            # Overwrite formulas too — UNLESS it is a protected row
             if isinstance(v, str) and v.startswith("="):
-                cell.value = None
+                if not is_protected:
+                    cell.value = None
                 continue
             if isinstance(v, (int, float)):
                 cell.value = None
